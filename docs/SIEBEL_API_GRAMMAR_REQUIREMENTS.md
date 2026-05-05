@@ -68,6 +68,9 @@ The grammar should cover these initial domains:
 - Catalog
 - Customer Management
 - Order Management
+- Product Configurator
+- Pricing
+- Quote Management
 - Asset Management
 - Customer 360
 - Service Requests
@@ -86,7 +89,6 @@ The grammar should support both documentation and executable development workflo
 
 - Full automated discovery of every Siebel object and workflow.
 - Replacing Siebel security or responsibility configuration.
-- Guaranteeing that every customer environment has identical API availability.
 - Automatically modifying Siebel repository configuration.
 - Storing credentials, passwords, session cookies, or customer secrets.
 
@@ -202,6 +204,7 @@ Initial operations:
 - Create residential account.
 - Associate contact to account.
 - Set primary contact on account.
+- Create and associate billing profile for an account
 - Associate address to account.
 - Retrieve customer/account profile.
 
@@ -220,6 +223,7 @@ Initial operations:
 - Add payment details to order.
 - Add order summary or related activity.
 - Submit order.
+- Retrieve order list for an account
 - Retrieve order lines with parent-child hierarchy.
 
 ### 11.4 Asset Management
@@ -231,6 +235,11 @@ Initial operations:
 - Retrieve asset hierarchy.
 - Retrieve asset service status.
 - Map asset to product subscription.
+- Modify asset
+- Upgrade / downgrade promotion
+- Suspend asset
+- Resume asset
+- Cancel asset
 
 ### 11.5 Customer 360
 
@@ -344,7 +353,6 @@ ISS Promotion WS - ApplyProductPromotion - Order
 - Create or identify the account before applying the promotion.
 - Pass the created account name and account id in the promotion payload.
 - Pass `ProdPromId`, not simple Product Id.
-- Pass `Price List Id` before pricing.
 - Do not create a separate order first when this workflow is responsible for order creation.
 - Re-query order lines after workflow completion to render the parent-child cart hierarchy.
 
@@ -539,40 +547,24 @@ The MCP server would enforce the grammar at runtime, while Codex uses the same g
 
 The first version is complete when:
 
-- Each required domain has at least five operation entries.
-- Each operation includes business intent, API type, endpoint, payload, sequencing rules, errors, examples, and regression checks.
-- Codex can use the grammar to explain which API to use for a business intent.
-- Codex can generate or update app code using the grammar.
-- Codex can generate regression tests from the grammar.
-- Known flows from the Sales Assistant app are represented:
-  - Create contact.
-  - Create account.
-  - Browse catalog.
-  - Search catalog.
-  - Add simple product.
-  - Apply bundled promotion.
-  - Retrieve cart line hierarchy.
-  - Submit order.
-  - Retrieve Customer 360.
+- It covers the B2C UI flows for:
+  - Customer 360
+  - New customer ordering.
+  - Existing customer ordering.
+  - Existing customer modify asset.
+  - Existing customer disconnect asset.
+  - Existing customer upgrade / downgrade promotion.
+  - Existing customer suspend and resume services.
+
 - The grammar avoids storing secrets or customer credentials.
 
 ## 17. Success Metrics
 
-- Reduction in Siebel integration regressions.
 - Faster UI generation over Siebel APIs.
-- Fewer payload corrections during development.
 - Faster onboarding for developers and Codex users.
 - Higher reuse across customer demos and implementations.
 - Clear separation between domain grammar, customer configuration, and application code.
 
-## 18. Open Questions
-
-- Should the canonical grammar format be Markdown, JSON, YAML, or all three?
-- Should the grammar be stored in the app repo, a shared enterprise repo, or both?
-- Which Siebel documentation sources should Codex be allowed to use?
-- How should customer-specific overrides be layered on top of the base grammar?
-- Which operations should become MCP tools first?
-- What level of automated validation is required before a grammar entry is marked approved?
 
 ## 19. Recommended Next Step
 
@@ -585,4 +577,3 @@ Read server.mjs, src/api/siebelApi.js, SIEBEL_INTEGRATION.md, and docs/SIEBEL_AP
 Generate docs/siebel-api-grammar/order-management.md and grammar/order-management.operations.json for the currently implemented contact/account/order/promotion flows.
 Do not change application behavior.
 ```
-

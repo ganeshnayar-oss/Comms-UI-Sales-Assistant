@@ -1,0 +1,177 @@
+{
+  "domain": "customer-360",
+  "version": "0.1.0",
+  "operations": [
+    {
+      "id": "customer-360.retrieve-account-profile",
+      "domain": "customer-360",
+      "operationName": "Retrieve Account Profile",
+      "businessIntent": "Populate Customer 360 profile after search or order submission.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Account/Account/{{accountId}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {},
+      "inputIdentifiers": ["accountId"],
+      "outputIdentifiers": ["accountId", "accountName", "accountNumber", "status", "address", "phone", "email"],
+      "sequencingRules": ["Use workflow-created account id after submit order."],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["C360 profile header is populated."],
+      "commonErrors": ["Generic account displayed instead of created account."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Account/Account/88-ACCOUNT"
+      },
+      "exampleResponse": {
+        "Id": "88-ACCOUNT",
+        "Name": "Alia Herbert",
+        "Status": "Active"
+      },
+      "regressionChecks": ["After order submit, C360 uses created account."],
+      "doNotRules": ["Do not fall back to first account when account id is known."],
+      "relatedOperations": ["customer-management.retrieve-account-profile"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "customer-360.retrieve-spotlight-metrics",
+      "domain": "customer-360",
+      "operationName": "Retrieve Spotlight Metrics",
+      "businessIntent": "Retrieve churn, NPS, credit rating, and CLTV for Customer 360 spotlight.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{spotlightMetricsEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "accountId": "{{accountId}}"
+      },
+      "inputIdentifiers": ["accountId"],
+      "outputIdentifiers": ["churn", "nps", "creditRating", "cltv"],
+      "sequencingRules": ["Normalize percentage metrics for bars.", "Format CLTV as currency."],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Spotlight metrics render in C360."],
+      "commonErrors": ["Metric value unparsable and UI crashes."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "{{spotlightMetricsEndpoint}}?accountId=88-ACCOUNT"
+      },
+      "exampleResponse": {
+        "Churn Score": "30%",
+        "NPS Score": "85%",
+        "Credit Rating": "85%",
+        "Value": "$15,000"
+      },
+      "regressionChecks": ["Malformed metric values render fallback UI."],
+      "doNotRules": ["Do not treat CLTV as a percentage bar."],
+      "relatedOperations": ["customer-360.retrieve-account-profile"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "customer-360.retrieve-recent-orders",
+      "domain": "customer-360",
+      "operationName": "Retrieve Recent Orders",
+      "businessIntent": "Show last three orders in Customer 360.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Order Entry/Order Entry - Orders"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "accountId": "{{accountId}}",
+        "pageSize": 3
+      },
+      "inputIdentifiers": ["accountId"],
+      "outputIdentifiers": ["orderId", "orderNumber", "status", "updatedDate"],
+      "sequencingRules": ["Query by account id.", "Sort by most recent.", "Limit foldout to three records."],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Recent orders foldout is populated."],
+      "commonErrors": ["Too many rows in foldout."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Order Entry/Order Entry - Orders/?PageSize=3&searchspec=[Account Id]=\"88-ACCOUNT\""
+      },
+      "exampleResponse": {
+        "items": [
+          {
+            "Id": "88-ORDER",
+            "Order Number": "DX4C_O112345"
+          }
+        ]
+      },
+      "regressionChecks": ["C360 shows only last three orders in foldout."],
+      "doNotRules": ["Do not show unlimited orders in foldout."],
+      "relatedOperations": ["order-management.retrieve-order-lines-with-hierarchy"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "customer-360.retrieve-recent-service-requests",
+      "domain": "customer-360",
+      "operationName": "Retrieve Recent Service Requests",
+      "businessIntent": "Show last three service requests in Customer 360.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Service Request/Service Request"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "accountId": "{{accountId}}",
+        "pageSize": 3
+      },
+      "inputIdentifiers": ["accountId"],
+      "outputIdentifiers": ["srId", "srNumber", "status", "updatedDate"],
+      "sequencingRules": ["Query by account id.", "Sort by updated date.", "Limit foldout to three records."],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Recent service requests are displayed."],
+      "commonErrors": ["Service requests queried without account filter."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Service Request/Service Request/?PageSize=3&searchspec=[Account Id]=\"88-ACCOUNT\""
+      },
+      "exampleResponse": {
+        "items": []
+      },
+      "regressionChecks": ["C360 service request foldout is limited to three rows."],
+      "doNotRules": ["Do not display unrelated service requests."],
+      "relatedOperations": ["service-requests.retrieve-service-request-list"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "customer-360.retrieve-billing-summary",
+      "domain": "customer-360",
+      "operationName": "Retrieve Billing Summary",
+      "businessIntent": "Retrieve billing summary and latest payment for Customer 360.",
+      "preferredApiType": "Hybrid",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{billingSummaryEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "accountId": "{{accountId}}"
+      },
+      "inputIdentifiers": ["accountId"],
+      "outputIdentifiers": ["balance", "lastPayment", "billingStatus"],
+      "sequencingRules": ["Query by account id.", "Keep billing foldout horizontally scrollable when layout requires it."],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Billing foldout is populated."],
+      "commonErrors": ["Billing service unavailable."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "{{billingSummaryEndpoint}}?accountId=88-ACCOUNT"
+      },
+      "exampleResponse": {
+        "balance": "$0.00",
+        "lastPayment": "$75.00"
+      },
+      "regressionChecks": ["C360 four foldouts remain visible and fifth requires horizontal scroll."],
+      "doNotRules": ["Do not block C360 rendering if billing summary is unavailable."],
+      "relatedOperations": ["customer-360.retrieve-account-profile"],
+      "humanValidationStatus": "draft"
+    }
+  ]
+}

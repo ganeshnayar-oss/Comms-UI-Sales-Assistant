@@ -1,0 +1,406 @@
+{
+  "domain": "order-management",
+  "version": "0.1.0",
+  "operations": [
+    {
+      "id": "order-management.create-sales-order",
+      "domain": "order-management",
+      "operationName": "Create Sales Order",
+      "businessIntent": "Create a sales order for simple product ordering when a workflow is not responsible for order creation.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{orderCreateEndpoint}}"
+      },
+      "requiredPayload": {
+        "orderNumber": "{{orderNumber}}",
+        "accountId": "{{accountId}}",
+        "accountName": "{{accountName}}",
+        "priceListId": "{{priceListId}}",
+        "priceListName": "{{priceListName}}"
+      },
+      "optionalPayload": {
+        "currencyCode": "USD",
+        "status": "Pending",
+        "orderType": "Sales Order"
+      },
+      "inputIdentifiers": ["accountId", "accountName", "priceListId", "orderNumber"],
+      "outputIdentifiers": ["orderId", "orderNumber"],
+      "sequencingRules": [
+        "Use this path for simple product flows.",
+        "Do not use this path before apply promotion when the promotion workflow creates the order.",
+        "Do not pass contact fields unless deployment grammar requires them.",
+        "Set price list before adding line items."
+      ],
+      "preconditions": ["Account exists for account-context order creation.", "Price list id is resolved."],
+      "postconditions": ["Order id and order number are stored."],
+      "commonErrors": ["HTTP 404 for wrong order create endpoint.", "Pricing fails when price list id is missing."],
+      "exampleRequest": {
+        "orderNumber": "CODX-ORDER-123",
+        "accountId": "88-ACCOUNT",
+        "accountName": "Alia Herbert",
+        "priceListId": "88-3GSD0O",
+        "priceListName": "DBE NA Pricelist"
+      },
+      "exampleResponse": {
+        "id": "88-ORDER",
+        "orderNumber": "CODX-ORDER-123"
+      },
+      "regressionChecks": [
+        "Simple product add can create an order when no order exists.",
+        "Promotion path does not create a duplicate pre-order."
+      ],
+      "doNotRules": ["Do not include contactName/customerName fields if grammar says order create should omit contact information."],
+      "relatedOperations": ["order-management.add-simple-product-to-order"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "order-management.add-simple-product-to-order",
+      "domain": "order-management",
+      "operationName": "Add Simple Product To Order",
+      "businessIntent": "Add a non-promotion product to an existing sales order.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/data/Order Entry/Order Entry - Orders/{{orderId}}/Order Entry - Line Items"
+      },
+      "requiredPayload": {
+        "Product Id": "{{productId}}",
+        "Quantity Requested": "{{quantity}}"
+      },
+      "optionalPayload": {
+        "Price List Id": "{{priceListId}}",
+        "Action Code": "Add"
+      },
+      "inputIdentifiers": ["orderId", "productId", "quantity", "priceListId"],
+      "outputIdentifiers": ["orderLineId"],
+      "sequencingRules": [
+        "Create order first if missing.",
+        "Set price list before item add.",
+        "Use only for non-promotion products."
+      ],
+      "preconditions": ["Order id exists.", "Product is not a promotion."],
+      "postconditions": ["Order has one additional line item."],
+      "commonErrors": ["HTTP 405 when wrong method is used.", "Line item fails pricing when price list is missing."],
+      "exampleRequest": {
+        "Product Id": "88-PRODUCT",
+        "Quantity Requested": "1",
+        "Action Code": "Add"
+      },
+      "exampleResponse": {
+        "Id": "88-LINE",
+        "Product Id": "88-PRODUCT"
+      },
+      "regressionChecks": ["Non-promotion add-to-cart does not call ApplyProductPromotion workflow."],
+      "doNotRules": ["Do not use this operation for bundled promotions."],
+      "relatedOperations": ["catalog.identify-promotion-versus-simple-product", "order-management.create-sales-order"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "order-management.apply-bundled-promotion-to-order",
+      "domain": "order-management",
+      "operationName": "Apply Bundled Promotion To Order",
+      "businessIntent": "Apply a bundled promotion and let Siebel create/explode order lines.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "ISS Promotion WS - ApplyProductPromotion - Order"
+      },
+      "requiredPayload": {
+        "ProcessName": "ISS Promotion WS - ApplyProductPromotion - Order",
+        "ProdPromId": "{{prodPromId}}",
+        "Sync": "Y",
+        "PricingMode": "Y",
+        "EligibilityMode": "1",
+        "Quantity": "1",
+        "SiebelMessage": {
+          "MessageId": "",
+          "MessageType": "Integration Object",
+          "IntObjectName": "PDS Order",
+          "IntObjectFormat": "Siebel Hierarchical",
+          "ListOfPDS Order": {
+            "Header": {
+              "Account": "{{accountName}}",
+              "Account Id": "{{accountId}}",
+              "Order Type": "Sales Order",
+              "Order Number": "{{orderNumber}}",
+              "Price List Id": "{{priceListId}}"
+            }
+          }
+        }
+      },
+      "optionalPayload": {
+        "Currency Code": "USD"
+      },
+      "inputIdentifiers": ["prodPromId", "accountId", "accountName", "orderNumber", "priceListId"],
+      "outputIdentifiers": ["orderId", "orderNumber", "orderLineIds", "parentLineItemIds", "childLineItemIds"],
+      "sequencingRules": [
+        "Create or identify account before applying promotion.",
+        "Pass ProdPromId, not Product Id.",
+        "Pass non-empty account id and account name.",
+        "Pass price list id before pricing.",
+        "Use Sync = Y.",
+        "Do not create a separate order first when this workflow creates the order.",
+        "Re-query order lines after workflow completion."
+      ],
+      "preconditions": ["Account exists.", "Price list id exists.", "Promotion id exists.", "User has workflow access."],
+      "postconditions": ["Order exists.", "Promotion parent and child line items exist.", "Order is associated to account."],
+      "commonErrors": ["SBL-DAT-00825", "SBL-PRM-50027", "No backend line items after successful UI response."],
+      "exampleRequest": {
+        "ProcessName": "ISS Promotion WS - ApplyProductPromotion - Order",
+        "ProdPromId": "88-255DX",
+        "Sync": "Y",
+        "PricingMode": "Y",
+        "EligibilityMode": "1",
+        "Quantity": "1",
+        "SiebelMessage": {
+          "MessageId": "",
+          "MessageType": "Integration Object",
+          "IntObjectName": "PDS Order",
+          "IntObjectFormat": "Siebel Hierarchical",
+          "ListOfPDS Order": {
+            "Header": {
+              "Account": "Alia Herbert",
+              "Account Id": "88-ACCOUNT",
+              "Order Type": "Sales Order",
+              "Order Number": "DX4C_O112345",
+              "Price List Id": "88-3GSD0O"
+            }
+          }
+        }
+      },
+      "exampleResponse": {
+        "SiebelMessage": {
+          "ListOfPDS Order": {
+            "Header": {
+              "Id": "88-ORDER",
+              "Order Number": "DX4C_O112345",
+              "Account Id": "88-ACCOUNT"
+            }
+          }
+        }
+      },
+      "regressionChecks": [
+        "Bundled promotion payload includes ProdPromId.",
+        "Payload includes non-empty Account Id.",
+        "Payload includes Price List Id.",
+        "Order line re-query returns parent-child hierarchy."
+      ],
+      "doNotRules": [
+        "Do not use Product Id instead of ProdPromId.",
+        "Do not use simple line item add for bundled promotion.",
+        "Do not create duplicate account for each promotion."
+      ],
+      "relatedOperations": ["catalog.identify-promotion-versus-simple-product", "order-management.retrieve-order-lines-with-hierarchy"],
+      "humanValidationStatus": "reviewed"
+    },
+    {
+      "id": "order-management.assign-owner-account-to-order",
+      "domain": "order-management",
+      "operationName": "Assign Owner Account To Order",
+      "businessIntent": "Associate owner account with an order.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "PATCH",
+        "path": "/siebel/v1.0/data/Order Entry/Order Entry - Orders/{{orderId}}"
+      },
+      "requiredPayload": {
+        "AccountId": "{{accountId}}",
+        "AccountName": "{{accountName}}"
+      },
+      "optionalPayload": {},
+      "inputIdentifiers": ["orderId", "accountId", "accountName"],
+      "outputIdentifiers": ["orderId"],
+      "sequencingRules": [
+        "Run owner account assignment before billing/service account assignment.",
+        "Do not update order line items during owner account step.",
+        "Do not add billing/service account fields until the workflow reaches that step."
+      ],
+      "preconditions": ["Order id exists.", "Account id exists."],
+      "postconditions": ["Order owner account is associated."],
+      "commonErrors": ["HTTP 405 when patch endpoint is not supported.", "Required line item fields missing if line items are patched accidentally."],
+      "exampleRequest": {
+        "AccountId": "88-ACCOUNT",
+        "AccountName": "Alia Herbert"
+      },
+      "exampleResponse": {
+        "Id": "88-ORDER",
+        "AccountId": "88-ACCOUNT"
+      },
+      "regressionChecks": ["Owner account patch does not alter line items."],
+      "doNotRules": ["Do not set billing/service accounts in this step."],
+      "relatedOperations": ["order-management.assign-billing-and-service-accounts"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "order-management.assign-billing-and-service-accounts",
+      "domain": "order-management",
+      "operationName": "Assign Billing And Service Accounts",
+      "businessIntent": "Set billing and service accounts after owner account step is complete.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{orderAccountAssignmentEndpoint}}"
+      },
+      "requiredPayload": {
+        "orderId": "{{orderId}}",
+        "billingAccountId": "{{billingAccountId}}",
+        "serviceAccountId": "{{serviceAccountId}}"
+      },
+      "optionalPayload": {
+        "applyToLineItems": true
+      },
+      "inputIdentifiers": ["orderId", "billingAccountId", "serviceAccountId"],
+      "outputIdentifiers": ["orderId"],
+      "sequencingRules": [
+        "Run only when workflow reaches billing/service account step.",
+        "Set header and line item account fields using a safe service operation when available.",
+        "Avoid partial line item integration object patches that trigger required field errors."
+      ],
+      "preconditions": ["Order exists.", "Owner account exists."],
+      "postconditions": ["Billing and service accounts are assigned."],
+      "commonErrors": ["HTTP 404 for wrong endpoint.", "SBL-DAT-00498 when line items are patched with missing required fields."],
+      "exampleRequest": {
+        "orderId": "88-ORDER",
+        "billingAccountId": "88-ACCOUNT",
+        "serviceAccountId": "88-ACCOUNT",
+        "applyToLineItems": true
+      },
+      "exampleResponse": {
+        "status": "updated"
+      },
+      "regressionChecks": ["Billing/service assignment is not invoked during owner account step."],
+      "doNotRules": ["Do not patch line items unless all required fields are supplied or a safe service API is used."],
+      "relatedOperations": ["order-management.assign-owner-account-to-order"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "order-management.add-payment-details-to-order",
+      "domain": "order-management",
+      "operationName": "Add Payment Details To Order",
+      "businessIntent": "Store payment details against the order.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/data/Order Entry/Order Entry - Orders/{{orderId}}/Payment"
+      },
+      "requiredPayload": {
+        "Payment Type": "{{paymentType}}",
+        "Card Number": "{{maskedOrTokenizedCardNumber}}"
+      },
+      "optionalPayload": {
+        "Card Holder Name": "{{cardholderName}}",
+        "Expiry Date": "{{expiry}}"
+      },
+      "inputIdentifiers": ["orderId", "paymentType", "cardToken"],
+      "outputIdentifiers": ["paymentId"],
+      "sequencingRules": [
+        "Payment belongs on order, not account.",
+        "Do not send sensitive card information to LLM.",
+        "Mask or tokenize card number for storage/display."
+      ],
+      "preconditions": ["Order id exists."],
+      "postconditions": ["Order has payment detail."],
+      "commonErrors": ["Wrong parent object if payment is added to account."],
+      "exampleRequest": {
+        "Payment Type": "Credit Card",
+        "Card Number": "**** **** **** 1234"
+      },
+      "exampleResponse": {
+        "Id": "88-PAYMENT"
+      },
+      "regressionChecks": ["Payment API route uses order id."],
+      "doNotRules": ["Do not attach payment to account."],
+      "relatedOperations": ["order-management.submit-order"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "order-management.retrieve-order-lines-with-hierarchy",
+      "domain": "order-management",
+      "operationName": "Retrieve Order Lines With Hierarchy",
+      "businessIntent": "Retrieve order line items with parent-child relationships for cart display.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Order Entry/Order Entry - Orders/{{orderId}}/Order Entry - Line Items"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {},
+      "inputIdentifiers": ["orderId"],
+      "outputIdentifiers": ["lineItemId", "parentLineItemId", "rootLineItemId"],
+      "sequencingRules": [
+        "Query after simple add or promotion apply.",
+        "Preserve parent/root line ids.",
+        "UI should allow parent line expand/collapse."
+      ],
+      "preconditions": ["Order id exists."],
+      "postconditions": ["Cart can render hierarchy."],
+      "commonErrors": ["No line items returned if workflow did not commit or wrong order id is used."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Order Entry/Order Entry - Orders/88-ORDER/Order Entry - Line Items"
+      },
+      "exampleResponse": {
+        "items": [
+          {
+            "Id": "88-LINE-PARENT",
+            "Product": "Supremo Mobile Unlimited",
+            "Parent Line Item Id": ""
+          },
+          {
+            "Id": "88-LINE-CHILD",
+            "Product": "SIM Service",
+            "Parent Line Item Id": "88-LINE-PARENT"
+          }
+        ]
+      },
+      "regressionChecks": ["Promotion child items display under parent in cart."],
+      "doNotRules": ["Do not render all descendants unconditionally when UI requires expand/collapse."],
+      "relatedOperations": ["order-management.apply-bundled-promotion-to-order"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "order-management.retrieve-order-list-for-account",
+      "domain": "order-management",
+      "operationName": "Retrieve Order List For Account",
+      "businessIntent": "Retrieve orders associated with an account for history or Customer 360.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Order Entry/Order Entry - Orders"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "accountId": "{{accountId}}",
+        "pageSize": 20
+      },
+      "inputIdentifiers": ["accountId"],
+      "outputIdentifiers": ["orderId", "orderNumber", "status", "updatedDate"],
+      "sequencingRules": [
+        "Query by account id.",
+        "Sort by most recent order or update date.",
+        "Limit result count for Customer 360 foldouts."
+      ],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Order list is available."],
+      "commonErrors": ["Unfiltered order list displays unrelated customers."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Order Entry/Order Entry - Orders/?searchspec=[Account Id]=\"88-ACCOUNT\""
+      },
+      "exampleResponse": {
+        "items": [
+          {
+            "Id": "88-ORDER",
+            "Order Number": "DX4C_O112345"
+          }
+        ]
+      },
+      "regressionChecks": ["Customer 360 order list queries the created account id."],
+      "doNotRules": ["Do not query orders without account filter in account context."],
+      "relatedOperations": ["customer-360.retrieve-recent-orders"],
+      "humanValidationStatus": "draft"
+    }
+  ]
+}

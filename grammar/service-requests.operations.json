@@ -1,0 +1,186 @@
+{
+  "domain": "service-requests",
+  "version": "0.1.0",
+  "operations": [
+    {
+      "id": "service-requests.create-service-request",
+      "domain": "service-requests",
+      "operationName": "Create Service Request",
+      "businessIntent": "Create a service request for the customer account.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/data/Service Request/Service Request"
+      },
+      "requiredPayload": {
+        "Abstract": "{{summary}}",
+        "Account Id": "{{accountId}}"
+      },
+      "optionalPayload": {
+        "Contact Id": "{{contactId}}",
+        "Severity": "{{severity}}",
+        "Status": "Open"
+      },
+      "inputIdentifiers": ["accountId", "contactId", "summary", "severity"],
+      "outputIdentifiers": ["srId", "srNumber"],
+      "sequencingRules": ["Associate SR to account id.", "Associate contact id when available."],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Service request id is returned."],
+      "commonErrors": ["Required field missing for service request create."],
+      "exampleRequest": {
+        "Abstract": "Customer needs help with activation.",
+        "Account Id": "88-ACCOUNT",
+        "Status": "Open"
+      },
+      "exampleResponse": {
+        "Id": "88-SR",
+        "SR Number": "SR-123"
+      },
+      "regressionChecks": ["New SR is associated with the workflow account."],
+      "doNotRules": ["Do not create an SR without account context when account exists."],
+      "relatedOperations": ["service-requests.retrieve-service-request-details"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "service-requests.retrieve-service-request-list",
+      "domain": "service-requests",
+      "operationName": "Retrieve Service Request List",
+      "businessIntent": "Retrieve service requests for an account.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Service Request/Service Request"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "accountId": "{{accountId}}",
+        "status": "{{status}}",
+        "pageSize": 25
+      },
+      "inputIdentifiers": ["accountId", "status"],
+      "outputIdentifiers": ["srId", "srNumber", "status"],
+      "sequencingRules": ["Query by account id.", "Apply status filters only when requested."],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Service request list is available."],
+      "commonErrors": ["Service requests from unrelated accounts displayed."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Service Request/Service Request/?searchspec=[Account Id]=\"88-ACCOUNT\""
+      },
+      "exampleResponse": {
+        "items": [
+          {
+            "Id": "88-SR",
+            "SR Number": "SR-123",
+            "Status": "Open"
+          }
+        ]
+      },
+      "regressionChecks": ["Open filter returns only open requests."],
+      "doNotRules": ["Do not query generic SR list for C360 account view."],
+      "relatedOperations": ["customer-360.retrieve-recent-service-requests"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "service-requests.retrieve-service-request-details",
+      "domain": "service-requests",
+      "operationName": "Retrieve Service Request Details",
+      "businessIntent": "Retrieve details for a selected service request.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Service Request/Service Request/{{srId}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {},
+      "inputIdentifiers": ["srId"],
+      "outputIdentifiers": ["srId", "srNumber", "status", "abstract", "description"],
+      "sequencingRules": ["Query by service request id."],
+      "preconditions": ["Service request id exists."],
+      "postconditions": ["SR detail can be rendered."],
+      "commonErrors": ["HTTP 404 for invalid SR id."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Service Request/Service Request/88-SR"
+      },
+      "exampleResponse": {
+        "Id": "88-SR",
+        "Abstract": "Customer needs help with activation.",
+        "Status": "Open"
+      },
+      "regressionChecks": ["SR details open from C360 rows."],
+      "doNotRules": ["Do not display detail for an SR not associated to the active account without clear navigation."],
+      "relatedOperations": ["service-requests.retrieve-service-request-list"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "service-requests.update-service-request-status",
+      "domain": "service-requests",
+      "operationName": "Update Service Request Status",
+      "businessIntent": "Update the status of a service request.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "PATCH",
+        "path": "/siebel/v1.0/data/Service Request/Service Request/{{srId}}"
+      },
+      "requiredPayload": {
+        "Status": "{{status}}"
+      },
+      "optionalPayload": {
+        "Sub-Status": "{{subStatus}}"
+      },
+      "inputIdentifiers": ["srId", "status"],
+      "outputIdentifiers": ["srId", "status"],
+      "sequencingRules": ["Validate allowed status transitions before update."],
+      "preconditions": ["Service request id exists."],
+      "postconditions": ["SR status is updated."],
+      "commonErrors": ["HTTP 405 if endpoint does not support PATCH.", "Invalid status transition."],
+      "exampleRequest": {
+        "Status": "Closed"
+      },
+      "exampleResponse": {
+        "Id": "88-SR",
+        "Status": "Closed"
+      },
+      "regressionChecks": ["Status update does not overwrite unrelated SR fields."],
+      "doNotRules": ["Do not send full stale SR payload when only status should change."],
+      "relatedOperations": ["service-requests.retrieve-service-request-details"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "service-requests.add-note-or-activity-to-service-request",
+      "domain": "service-requests",
+      "operationName": "Add Note Or Activity To Service Request",
+      "businessIntent": "Add a note or activity to a service request.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{serviceRequestActivityEndpoint}}"
+      },
+      "requiredPayload": {
+        "srId": "{{srId}}",
+        "description": "{{description}}"
+      },
+      "optionalPayload": {
+        "type": "Note"
+      },
+      "inputIdentifiers": ["srId", "description"],
+      "outputIdentifiers": ["activityId"],
+      "sequencingRules": ["Truncate text to target Siebel field length.", "Associate note/activity to SR id."],
+      "preconditions": ["Service request id exists."],
+      "postconditions": ["Note or activity is associated to SR."],
+      "commonErrors": ["SBL-EAI-13011 text field longer than allowed length."],
+      "exampleRequest": {
+        "srId": "88-SR",
+        "description": "Customer confirmed appointment window."
+      },
+      "exampleResponse": {
+        "activityId": "88-ACTIVITY"
+      },
+      "regressionChecks": ["Long notes are safely truncated or mapped to long-text field."],
+      "doNotRules": ["Do not exceed Siebel field length limits."],
+      "relatedOperations": ["service-requests.retrieve-service-request-details"],
+      "humanValidationStatus": "draft"
+    }
+  ]
+}

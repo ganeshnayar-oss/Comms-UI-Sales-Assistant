@@ -1,0 +1,378 @@
+{
+  "domain": "asset-management",
+  "version": "0.1.0",
+  "operations": [
+    {
+      "id": "asset-management.retrieve-customer-assets",
+      "domain": "asset-management",
+      "operationName": "Retrieve Customer Assets",
+      "businessIntent": "Retrieve active products, services, and subscriptions for an account.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Asset Management/Asset Mgmt - Asset - Header"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "accountId": "{{accountId}}",
+        "pageSize": 20
+      },
+      "inputIdentifiers": ["accountId"],
+      "outputIdentifiers": ["assetId", "productId", "status"],
+      "sequencingRules": ["Query by account id.", "Limit Customer 360 foldout display to three records."],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Assets are available for Customer 360."],
+      "commonErrors": ["HTTP 404 for wrong asset business object/component path."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Asset Management/Asset Mgmt - Asset - Header/?searchspec=[Account Id]=\"88-ACCOUNT\""
+      },
+      "exampleResponse": {
+        "items": [
+          {
+            "Id": "88-ASSET",
+            "Name": "Supremo Mobile Unlimited",
+            "Status": "Active"
+          }
+        ]
+      },
+      "regressionChecks": ["Customer 360 assets foldout shows only last or most relevant three assets."],
+      "doNotRules": ["Do not query generic assets without account filter."],
+      "relatedOperations": ["customer-360.retrieve-account-profile"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "asset-management.retrieve-asset-details",
+      "domain": "asset-management",
+      "operationName": "Retrieve Asset Details",
+      "businessIntent": "Retrieve detail for a selected customer asset.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Asset Management/Asset Mgmt - Asset - Header/{{assetId}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {},
+      "inputIdentifiers": ["assetId"],
+      "outputIdentifiers": ["assetId", "productName", "status", "startDate", "netPrice"],
+      "sequencingRules": ["Query by asset id."],
+      "preconditions": ["Asset id exists."],
+      "postconditions": ["Asset detail can be shown."],
+      "commonErrors": ["HTTP 404 for missing asset id."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Asset Management/Asset Mgmt - Asset - Header/88-ASSET"
+      },
+      "exampleResponse": {
+        "Id": "88-ASSET",
+        "Name": "Supremo Mobile Unlimited",
+        "Status": "Active"
+      },
+      "regressionChecks": ["Asset details preserve raw Siebel status."],
+      "doNotRules": ["Do not infer asset state from product name only."],
+      "relatedOperations": ["asset-management.retrieve-customer-assets"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "asset-management.retrieve-asset-hierarchy",
+      "domain": "asset-management",
+      "operationName": "Retrieve Asset Hierarchy",
+      "businessIntent": "Retrieve parent-child asset relationships for bundled services.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{assetHierarchyEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "rootAssetId": "{{rootAssetId}}"
+      },
+      "inputIdentifiers": ["rootAssetId", "accountId"],
+      "outputIdentifiers": ["assetId", "parentAssetId", "rootAssetId"],
+      "sequencingRules": ["Preserve parent and root asset ids."],
+      "preconditions": ["Root asset or account id exists."],
+      "postconditions": ["UI can render asset hierarchy."],
+      "commonErrors": ["Hierarchy flattened by transformer."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "{{assetHierarchyEndpoint}}?rootAssetId=88-ASSET"
+      },
+      "exampleResponse": {
+        "items": [
+          {
+            "Id": "88-ASSET",
+            "Parent Asset Id": ""
+          }
+        ]
+      },
+      "regressionChecks": ["Bundle children render beneath parent asset."],
+      "doNotRules": ["Do not flatten asset hierarchy when parent-child UI is required."],
+      "relatedOperations": ["asset-management.retrieve-customer-assets"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "asset-management.retrieve-asset-service-status",
+      "domain": "asset-management",
+      "operationName": "Retrieve Asset Service Status",
+      "businessIntent": "Retrieve service status for an asset.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Asset Management/Asset Mgmt - Asset - Header/{{assetId}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {},
+      "inputIdentifiers": ["assetId"],
+      "outputIdentifiers": ["status", "serviceStatus"],
+      "sequencingRules": ["Normalize display status but preserve raw value."],
+      "preconditions": ["Asset id exists."],
+      "postconditions": ["Service status can be displayed."],
+      "commonErrors": ["Unknown status value from LOV translation/session language."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Asset Management/Asset Mgmt - Asset - Header/88-ASSET"
+      },
+      "exampleResponse": {
+        "Status": "Active"
+      },
+      "regressionChecks": ["Status localization does not break status logic."],
+      "doNotRules": ["Do not hard-code only English status labels in business logic."],
+      "relatedOperations": ["asset-management.retrieve-asset-details"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "asset-management.map-asset-to-product-subscription",
+      "domain": "asset-management",
+      "operationName": "Map Asset To Product Subscription",
+      "businessIntent": "Connect asset to product or subscription context for Customer 360.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{assetProductMappingEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "assetId": "{{assetId}}",
+        "productId": "{{productId}}"
+      },
+      "inputIdentifiers": ["assetId", "productId"],
+      "outputIdentifiers": ["subscriptionId", "productId", "assetId"],
+      "sequencingRules": ["Use product id, integration id, or subscription id when available."],
+      "preconditions": ["Asset id exists."],
+      "postconditions": ["Subscription context can be shown."],
+      "commonErrors": ["Mapping inferred from display name and incorrect subscription selected."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "{{assetProductMappingEndpoint}}?assetId=88-ASSET"
+      },
+      "exampleResponse": {
+        "assetId": "88-ASSET",
+        "productId": "88-PRODUCT",
+        "subscriptionId": "SUB-001"
+      },
+      "regressionChecks": ["Subscription mapping uses identifiers, not display names only."],
+      "doNotRules": ["Do not infer subscription state from asset name alone."],
+      "relatedOperations": ["customer-360.retrieve-recent-assets"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "asset-management.modify-asset",
+      "domain": "asset-management",
+      "operationName": "Modify Asset",
+      "businessIntent": "Modify an existing customer's asset or subscription.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "{{assetModifyWorkflowProcess}}"
+      },
+      "requiredPayload": {
+        "assetId": "{{assetId}}",
+        "accountId": "{{accountId}}",
+        "modificationRequest": "{{modificationRequest}}"
+      },
+      "optionalPayload": {
+        "effectiveDate": "{{effectiveDate}}"
+      },
+      "inputIdentifiers": ["assetId", "accountId"],
+      "outputIdentifiers": ["orderId", "assetId"],
+      "sequencingRules": [
+        "Retrieve current asset hierarchy first.",
+        "Validate modification eligibility.",
+        "Preserve account and asset identifiers."
+      ],
+      "preconditions": ["Asset id exists.", "Account id exists."],
+      "postconditions": ["Modification order or updated asset state is returned."],
+      "commonErrors": ["Wrong workflow selected for asset modification."],
+      "exampleRequest": {
+        "assetId": "88-ASSET",
+        "accountId": "88-ACCOUNT",
+        "modificationRequest": "Change bandwidth"
+      },
+      "exampleResponse": {
+        "orderId": "88-ORDER"
+      },
+      "regressionChecks": ["Modification uses existing asset id, not catalog product id only."],
+      "doNotRules": ["Do not create a new sale when modifying an existing asset."],
+      "relatedOperations": ["asset-management.retrieve-asset-hierarchy"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "asset-management.upgrade-or-downgrade-promotion",
+      "domain": "asset-management",
+      "operationName": "Upgrade Or Downgrade Promotion",
+      "businessIntent": "Move an existing customer from one promotion to another.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "{{promotionUpgradeDowngradeWorkflowProcess}}"
+      },
+      "requiredPayload": {
+        "accountId": "{{accountId}}",
+        "sourceAssetId": "{{sourceAssetId}}",
+        "targetProdPromId": "{{targetProdPromId}}"
+      },
+      "optionalPayload": {
+        "effectiveDate": "{{effectiveDate}}"
+      },
+      "inputIdentifiers": ["accountId", "sourceAssetId", "targetProdPromId"],
+      "outputIdentifiers": ["orderId", "assetId"],
+      "sequencingRules": [
+        "Retrieve current asset/promotion.",
+        "Check eligibility for target promotion.",
+        "Use workflow that preserves child item and pricing behavior."
+      ],
+      "preconditions": ["Current promotion asset exists.", "Target promotion exists."],
+      "postconditions": ["Upgrade/downgrade order or updated assets are returned."],
+      "commonErrors": ["Target promotion applied as new sale instead of asset change."],
+      "exampleRequest": {
+        "accountId": "88-ACCOUNT",
+        "sourceAssetId": "88-ASSET",
+        "targetProdPromId": "88-NEWPROMO"
+      },
+      "exampleResponse": {
+        "orderId": "88-ORDER"
+      },
+      "regressionChecks": ["Upgrade/downgrade preserves existing account and asset context."],
+      "doNotRules": ["Do not use new-customer apply promotion flow for existing asset upgrade without asset context."],
+      "relatedOperations": ["asset-management.retrieve-asset-hierarchy", "pricing.price-promotion"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "asset-management.suspend-asset",
+      "domain": "asset-management",
+      "operationName": "Suspend Asset",
+      "businessIntent": "Temporarily suspend service for an active asset.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "{{assetSuspendWorkflowProcess}}"
+      },
+      "requiredPayload": {
+        "assetId": "{{assetId}}",
+        "accountId": "{{accountId}}"
+      },
+      "optionalPayload": {
+        "reason": "{{reason}}",
+        "effectiveDate": "{{effectiveDate}}"
+      },
+      "inputIdentifiers": ["assetId", "accountId"],
+      "outputIdentifiers": ["assetId", "status"],
+      "sequencingRules": ["Validate asset is active.", "Capture reason and effective date when required."],
+      "preconditions": ["Asset status is Active."],
+      "postconditions": ["Asset status is suspended or suspension order is created."],
+      "commonErrors": ["Attempt to suspend non-active asset."],
+      "exampleRequest": {
+        "assetId": "88-ASSET",
+        "accountId": "88-ACCOUNT",
+        "reason": "Customer requested temporary suspension"
+      },
+      "exampleResponse": {
+        "assetId": "88-ASSET",
+        "status": "Suspended"
+      },
+      "regressionChecks": ["Suspend action does not disconnect/cancel the asset."],
+      "doNotRules": ["Do not use cancel workflow for suspension."],
+      "relatedOperations": ["asset-management.resume-asset"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "asset-management.resume-asset",
+      "domain": "asset-management",
+      "operationName": "Resume Asset",
+      "businessIntent": "Resume service for a suspended asset.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "{{assetResumeWorkflowProcess}}"
+      },
+      "requiredPayload": {
+        "assetId": "{{assetId}}",
+        "accountId": "{{accountId}}"
+      },
+      "optionalPayload": {
+        "effectiveDate": "{{effectiveDate}}"
+      },
+      "inputIdentifiers": ["assetId", "accountId"],
+      "outputIdentifiers": ["assetId", "status"],
+      "sequencingRules": ["Validate asset is suspended.", "Refresh pricing or service state if required."],
+      "preconditions": ["Asset status is Suspended."],
+      "postconditions": ["Asset status is active or resume order is created."],
+      "commonErrors": ["Attempt to resume an active asset."],
+      "exampleRequest": {
+        "assetId": "88-ASSET",
+        "accountId": "88-ACCOUNT"
+      },
+      "exampleResponse": {
+        "assetId": "88-ASSET",
+        "status": "Active"
+      },
+      "regressionChecks": ["Resume action does not create duplicate asset."],
+      "doNotRules": ["Do not use new sale order path for resume."],
+      "relatedOperations": ["asset-management.suspend-asset"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "asset-management.cancel-asset",
+      "domain": "asset-management",
+      "operationName": "Cancel Asset",
+      "businessIntent": "Disconnect or cancel an existing asset.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "{{assetCancelWorkflowProcess}}"
+      },
+      "requiredPayload": {
+        "assetId": "{{assetId}}",
+        "accountId": "{{accountId}}"
+      },
+      "optionalPayload": {
+        "reason": "{{reason}}",
+        "effectiveDate": "{{effectiveDate}}"
+      },
+      "inputIdentifiers": ["assetId", "accountId"],
+      "outputIdentifiers": ["assetId", "status", "orderId"],
+      "sequencingRules": ["Validate disconnect eligibility.", "Capture reason and effective date.", "Preserve audit trail."],
+      "preconditions": ["Asset exists."],
+      "postconditions": ["Disconnect/cancel order or updated asset state is returned."],
+      "commonErrors": ["Asset canceled without effective date/reason when required."],
+      "exampleRequest": {
+        "assetId": "88-ASSET",
+        "accountId": "88-ACCOUNT",
+        "reason": "Customer requested disconnect"
+      },
+      "exampleResponse": {
+        "orderId": "88-ORDER",
+        "status": "Pending Disconnect"
+      },
+      "regressionChecks": ["Cancel action does not suspend/resume asset by mistake."],
+      "doNotRules": ["Do not delete asset records directly."],
+      "relatedOperations": ["asset-management.retrieve-asset-details"],
+      "humanValidationStatus": "draft"
+    }
+  ]
+}

@@ -1,0 +1,200 @@
+{
+  "domain": "quote-management",
+  "version": "0.1.0",
+  "operations": [
+    {
+      "id": "quote-management.create-quote",
+      "domain": "quote-management",
+      "operationName": "Create Quote",
+      "businessIntent": "Create a quote for a customer before order submission when quote capture is required.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{quoteCreateEndpoint}}"
+      },
+      "requiredPayload": {
+        "accountId": "{{accountId}}",
+        "priceListId": "{{priceListId}}"
+      },
+      "optionalPayload": {
+        "contactId": "{{contactId}}",
+        "currencyCode": "USD",
+        "status": "In Progress"
+      },
+      "inputIdentifiers": ["accountId", "priceListId", "contactId"],
+      "outputIdentifiers": ["quoteId", "quoteNumber"],
+      "sequencingRules": ["Requires account context when available.", "Set price list before adding quote lines."],
+      "preconditions": ["Account id exists.", "Price list id exists."],
+      "postconditions": ["Quote id is available."],
+      "commonErrors": ["Quote created without price list and cannot price lines."],
+      "exampleRequest": {
+        "accountId": "88-ACCOUNT",
+        "priceListId": "88-3GSD0O"
+      },
+      "exampleResponse": {
+        "quoteId": "88-QUOTE",
+        "quoteNumber": "Q-123"
+      },
+      "regressionChecks": ["Quote create does not create an order unless conversion is requested."],
+      "doNotRules": ["Do not use order create API for quote creation."],
+      "relatedOperations": ["quote-management.add-simple-product-to-quote"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "quote-management.add-simple-product-to-quote",
+      "domain": "quote-management",
+      "operationName": "Add Simple Product To Quote",
+      "businessIntent": "Add a non-promotion product to a quote.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{quoteLineItemEndpoint}}"
+      },
+      "requiredPayload": {
+        "quoteId": "{{quoteId}}",
+        "productId": "{{productId}}",
+        "quantity": "1"
+      },
+      "optionalPayload": {
+        "priceListId": "{{priceListId}}"
+      },
+      "inputIdentifiers": ["quoteId", "productId", "priceListId"],
+      "outputIdentifiers": ["quoteLineId"],
+      "sequencingRules": ["Use only for non-promotion products."],
+      "preconditions": ["Quote id exists.", "Product is not a promotion."],
+      "postconditions": ["Quote line is created."],
+      "commonErrors": ["Promotion child items missing if promotion added as simple quote line."],
+      "exampleRequest": {
+        "quoteId": "88-QUOTE",
+        "productId": "88-PRODUCT",
+        "quantity": "1"
+      },
+      "exampleResponse": {
+        "quoteLineId": "88-QLINE"
+      },
+      "regressionChecks": ["Simple quote line path is not used for promotions."],
+      "doNotRules": ["Do not add bundled promotion as a simple quote line."],
+      "relatedOperations": ["quote-management.apply-promotion-to-quote"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "quote-management.apply-promotion-to-quote",
+      "domain": "quote-management",
+      "operationName": "Apply Promotion To Quote",
+      "businessIntent": "Apply a bundled promotion to a quote.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "{{quoteApplyPromotionWorkflowProcess}}"
+      },
+      "requiredPayload": {
+        "quoteId": "{{quoteId}}",
+        "prodPromId": "{{prodPromId}}",
+        "accountId": "{{accountId}}",
+        "priceListId": "{{priceListId}}"
+      },
+      "optionalPayload": {
+        "quantity": "1",
+        "pricingMode": "Y"
+      },
+      "inputIdentifiers": ["quoteId", "prodPromId", "accountId", "priceListId"],
+      "outputIdentifiers": ["quoteId", "quoteLineIds"],
+      "sequencingRules": [
+        "Use quote-specific promotion workflow, not order-specific workflow.",
+        "Pass ProdPromId, account id, and price list id.",
+        "Re-query quote lines after apply."
+      ],
+      "preconditions": ["Quote exists.", "Promotion exists.", "Price list id exists."],
+      "postconditions": ["Promotion parent and child quote lines exist."],
+      "commonErrors": ["Order promotion workflow used against quote."],
+      "exampleRequest": {
+        "quoteId": "88-QUOTE",
+        "prodPromId": "88-255DX",
+        "accountId": "88-ACCOUNT",
+        "priceListId": "88-3GSD0O"
+      },
+      "exampleResponse": {
+        "quoteId": "88-QUOTE",
+        "quoteLineIds": ["88-QLINE"]
+      },
+      "regressionChecks": ["Quote promotion workflow uses ProdPromId."],
+      "doNotRules": ["Do not use order-specific ApplyProductPromotion process for quote unless grammar validates it."],
+      "relatedOperations": ["order-management.apply-bundled-promotion-to-order"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "quote-management.convert-quote-to-order",
+      "domain": "quote-management",
+      "operationName": "Convert Quote To Order",
+      "businessIntent": "Convert an accepted quote into a sales order.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "{{quoteToOrderWorkflowProcess}}"
+      },
+      "requiredPayload": {
+        "quoteId": "{{quoteId}}"
+      },
+      "optionalPayload": {
+        "accountId": "{{accountId}}"
+      },
+      "inputIdentifiers": ["quoteId"],
+      "outputIdentifiers": ["orderId", "orderNumber"],
+      "sequencingRules": ["Quote must be valid and priced.", "Preserve account, contact, billing, service, and line hierarchy."],
+      "preconditions": ["Quote exists.", "Quote is priced."],
+      "postconditions": ["Sales order is created."],
+      "commonErrors": ["Quote converted without line hierarchy."],
+      "exampleRequest": {
+        "quoteId": "88-QUOTE"
+      },
+      "exampleResponse": {
+        "orderId": "88-ORDER",
+        "orderNumber": "SO-123"
+      },
+      "regressionChecks": ["Converted order preserves quote account and lines."],
+      "doNotRules": ["Do not recreate line items manually when conversion workflow handles them."],
+      "relatedOperations": ["order-management.retrieve-order-lines-with-hierarchy"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "quote-management.retrieve-quotes-for-account",
+      "domain": "quote-management",
+      "operationName": "Retrieve Quotes For Account",
+      "businessIntent": "Retrieve quote history or active quotes for an account.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{quoteListEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "accountId": "{{accountId}}",
+        "pageSize": 20
+      },
+      "inputIdentifiers": ["accountId"],
+      "outputIdentifiers": ["quoteId", "quoteNumber", "status"],
+      "sequencingRules": ["Query by account id.", "Limit Customer 360 foldouts when used in summary UI."],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Quote list is available."],
+      "commonErrors": ["Unfiltered quote list displayed."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "{{quoteListEndpoint}}?accountId=88-ACCOUNT"
+      },
+      "exampleResponse": {
+        "items": [
+          {
+            "quoteId": "88-QUOTE",
+            "quoteNumber": "Q-123"
+          }
+        ]
+      },
+      "regressionChecks": ["Quote list is account scoped."],
+      "doNotRules": ["Do not show unrelated quotes in account context."],
+      "relatedOperations": ["customer-360.retrieve-account-profile"],
+      "humanValidationStatus": "draft"
+    }
+  ]
+}

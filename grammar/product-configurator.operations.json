@@ -1,0 +1,190 @@
+{
+  "domain": "product-configurator",
+  "version": "0.1.0",
+  "operations": [
+    {
+      "id": "product-configurator.start-product-configuration-session",
+      "domain": "product-configurator",
+      "operationName": "Start Product Configuration Session",
+      "businessIntent": "Initialize configuration for a selected configurable product or promotion.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{productConfiguratorSessionEndpoint}}"
+      },
+      "requiredPayload": {
+        "productId": "{{productId}}"
+      },
+      "optionalPayload": {
+        "accountId": "{{accountId}}",
+        "orderId": "{{orderId}}",
+        "priceListId": "{{priceListId}}"
+      },
+      "inputIdentifiers": ["productId", "accountId", "orderId", "priceListId"],
+      "outputIdentifiers": ["configurationSessionId"],
+      "sequencingRules": [
+        "Identify whether product is configurable.",
+        "Carry account, price list, and order context when available."
+      ],
+      "preconditions": ["Product is selected."],
+      "postconditions": ["Configuration session id is available."],
+      "commonErrors": ["Configurator session started without price/account context and later pricing fails."],
+      "exampleRequest": {
+        "productId": "88-PRODUCT",
+        "accountId": "88-ACCOUNT",
+        "priceListId": "88-3GSD0O"
+      },
+      "exampleResponse": {
+        "configurationSessionId": "CFG-001"
+      },
+      "regressionChecks": ["Configurable promotion is not added as parent-only order line."],
+      "doNotRules": ["Do not bypass configurator for configurable bundled products."],
+      "relatedOperations": ["product-configurator.retrieve-configurable-components"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "product-configurator.retrieve-configurable-components",
+      "domain": "product-configurator",
+      "operationName": "Retrieve Configurable Components",
+      "businessIntent": "Retrieve child components, choices, defaults, and cardinality for a configurable product.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{productConfiguratorComponentsEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "configurationSessionId": "{{configurationSessionId}}",
+        "productId": "{{productId}}"
+      },
+      "inputIdentifiers": ["configurationSessionId", "productId"],
+      "outputIdentifiers": ["componentId", "parentComponentId", "minCardinality", "maxCardinality"],
+      "sequencingRules": ["Preserve component hierarchy.", "Keep cardinality with each relationship."],
+      "preconditions": ["Configuration session or product id exists."],
+      "postconditions": ["UI can render configuration choices."],
+      "commonErrors": ["Component hierarchy flattened and invalid selection allowed."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "{{productConfiguratorComponentsEndpoint}}?configurationSessionId=CFG-001"
+      },
+      "exampleResponse": {
+        "components": [
+          {
+            "id": "COMP-1",
+            "name": "SIM",
+            "minCardinality": 1,
+            "maxCardinality": 1
+          }
+        ]
+      },
+      "regressionChecks": ["Required component choices are visible."],
+      "doNotRules": ["Do not lose min/max cardinality metadata."],
+      "relatedOperations": ["product-configurator.validate-product-configuration"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "product-configurator.validate-product-configuration",
+      "domain": "product-configurator",
+      "operationName": "Validate Product Configuration",
+      "businessIntent": "Validate selected components before adding to order or submitting.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "{{configurationValidationWorkflowProcess}}"
+      },
+      "requiredPayload": {
+        "configurationSessionId": "{{configurationSessionId}}",
+        "selectedComponents": "{{selectedComponents}}"
+      },
+      "optionalPayload": {
+        "orderId": "{{orderId}}"
+      },
+      "inputIdentifiers": ["configurationSessionId", "selectedComponents"],
+      "outputIdentifiers": ["validationStatus", "validationMessages"],
+      "sequencingRules": ["Validate before pricing or order submit when configuration changed."],
+      "preconditions": ["Configuration choices exist."],
+      "postconditions": ["Validation result is available to UI."],
+      "commonErrors": ["Required component missing."],
+      "exampleRequest": {
+        "configurationSessionId": "CFG-001",
+        "selectedComponents": []
+      },
+      "exampleResponse": {
+        "validationStatus": "Invalid",
+        "validationMessages": ["SIM component is required."]
+      },
+      "regressionChecks": ["Invalid configuration blocks submit."],
+      "doNotRules": ["Do not hide validation errors from the agent."],
+      "relatedOperations": ["product-configurator.apply-configuration-to-order"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "product-configurator.apply-configuration-to-order",
+      "domain": "product-configurator",
+      "operationName": "Apply Configuration To Order",
+      "businessIntent": "Persist a validated configuration to an order.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{applyConfigurationToOrderEndpoint}}"
+      },
+      "requiredPayload": {
+        "orderId": "{{orderId}}",
+        "configurationSessionId": "{{configurationSessionId}}"
+      },
+      "optionalPayload": {
+        "selectedComponents": "{{selectedComponents}}"
+      },
+      "inputIdentifiers": ["orderId", "configurationSessionId"],
+      "outputIdentifiers": ["orderId", "orderLineIds"],
+      "sequencingRules": ["Requires order context.", "Re-query line items after apply."],
+      "preconditions": ["Configuration is valid.", "Order exists."],
+      "postconditions": ["Order lines reflect selected configuration."],
+      "commonErrors": ["Applied configuration not reflected because line items were not re-queried."],
+      "exampleRequest": {
+        "orderId": "88-ORDER",
+        "configurationSessionId": "CFG-001"
+      },
+      "exampleResponse": {
+        "orderId": "88-ORDER",
+        "orderLineIds": ["88-LINE"]
+      },
+      "regressionChecks": ["Configured child lines appear in cart hierarchy."],
+      "doNotRules": ["Do not assume local configuration state equals persisted order state."],
+      "relatedOperations": ["order-management.retrieve-order-lines-with-hierarchy"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "product-configurator.reset-product-configuration",
+      "domain": "product-configurator",
+      "operationName": "Reset Product Configuration",
+      "businessIntent": "Discard selected component changes and return to defaults.",
+      "preferredApiType": "Hybrid",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{resetConfigurationEndpoint}}"
+      },
+      "requiredPayload": {
+        "configurationSessionId": "{{configurationSessionId}}"
+      },
+      "optionalPayload": {},
+      "inputIdentifiers": ["configurationSessionId"],
+      "outputIdentifiers": ["configurationSessionId"],
+      "sequencingRules": ["Do not mutate order lines unless configuration was already applied."],
+      "preconditions": ["Configuration session exists."],
+      "postconditions": ["Configuration returns to default state."],
+      "commonErrors": ["Reset removes already-applied order lines unexpectedly."],
+      "exampleRequest": {
+        "configurationSessionId": "CFG-001"
+      },
+      "exampleResponse": {
+        "status": "reset"
+      },
+      "regressionChecks": ["Reset before apply does not change order lines."],
+      "doNotRules": ["Do not delete persisted order lines for local reset unless user confirms."],
+      "relatedOperations": ["product-configurator.retrieve-configurable-components"],
+      "humanValidationStatus": "draft"
+    }
+  ]
+}

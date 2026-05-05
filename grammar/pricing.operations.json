@@ -1,0 +1,185 @@
+{
+  "domain": "pricing",
+  "version": "0.1.0",
+  "operations": [
+    {
+      "id": "pricing.resolve-price-list",
+      "domain": "pricing",
+      "operationName": "Resolve Price List",
+      "businessIntent": "Resolve price list name into price list id.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{priceListEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "priceListName": "{{priceListName}}"
+      },
+      "inputIdentifiers": ["priceListName"],
+      "outputIdentifiers": ["priceListId", "priceListName"],
+      "sequencingRules": ["Resolve before order create, promotion apply, or pricing."],
+      "preconditions": ["Price list name exists."],
+      "postconditions": ["Price list id is available."],
+      "commonErrors": ["Pricing fails because price list id is missing."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "{{priceListEndpoint}}?searchspec=[Name]=\"DBE NA Pricelist\""
+      },
+      "exampleResponse": {
+        "id": "88-3GSD0O",
+        "name": "DBE NA Pricelist"
+      },
+      "regressionChecks": ["Order and promotion payloads include price list id."],
+      "doNotRules": ["Do not use price list name where id is required."],
+      "relatedOperations": ["catalog.resolve-price-list"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "pricing.price-product",
+      "domain": "pricing",
+      "operationName": "Price Product",
+      "businessIntent": "Retrieve product price in catalog and price list context.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{productPricingEndpoint}}"
+      },
+      "requiredPayload": {
+        "productId": "{{productId}}",
+        "priceListId": "{{priceListId}}"
+      },
+      "optionalPayload": {
+        "accountId": "{{accountId}}",
+        "quantity": "1"
+      },
+      "inputIdentifiers": ["productId", "priceListId"],
+      "outputIdentifiers": ["netPrice", "priceType", "recurringPrice", "oneTimePrice"],
+      "sequencingRules": ["Respect price type when displaying one-time versus recurring.", "Use Net Price when Siebel returns net price."],
+      "preconditions": ["Product id exists.", "Price list id exists."],
+      "postconditions": ["Product pricing can be displayed."],
+      "commonErrors": ["UI expects One-Time/Recurring fields but Siebel returns Net Price."],
+      "exampleRequest": {
+        "productId": "88-PRODUCT",
+        "priceListId": "88-3GSD0O"
+      },
+      "exampleResponse": {
+        "Net Price": "$66.00",
+        "Price Type": "Recurring"
+      },
+      "regressionChecks": ["UI uses price type to decide recurring or one-time display."],
+      "doNotRules": ["Do not hard-code one-time and recurring field names when grammar says Net Price is source."],
+      "relatedOperations": ["catalog.search-products-by-name"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "pricing.price-promotion",
+      "domain": "pricing",
+      "operationName": "Price Promotion",
+      "businessIntent": "Price a promotion including child components.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "{{promotionPricingWorkflowProcess}}"
+      },
+      "requiredPayload": {
+        "prodPromId": "{{prodPromId}}",
+        "priceListId": "{{priceListId}}"
+      },
+      "optionalPayload": {
+        "accountId": "{{accountId}}"
+      },
+      "inputIdentifiers": ["prodPromId", "priceListId"],
+      "outputIdentifiers": ["netPrice", "childPrices"],
+      "sequencingRules": ["Do not price only the promotion parent.", "Use promotion workflow when pricing is tied to apply promotion."],
+      "preconditions": ["Promotion id exists.", "Price list id exists."],
+      "postconditions": ["Promotion and child pricing are available."],
+      "commonErrors": ["Only parent promotion priced."],
+      "exampleRequest": {
+        "prodPromId": "88-255DX",
+        "priceListId": "88-3GSD0O"
+      },
+      "exampleResponse": {
+        "Net Price": "$66.00",
+        "childPrices": []
+      },
+      "regressionChecks": ["Promotion pricing preserves child components."],
+      "doNotRules": ["Do not treat promotion as simple product for pricing."],
+      "relatedOperations": ["order-management.apply-bundled-promotion-to-order"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "pricing.price-order",
+      "domain": "pricing",
+      "operationName": "Price Order",
+      "businessIntent": "Reprice an order after line, account, or configuration changes.",
+      "preferredApiType": "Workflow Process API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/Workflow Process Manager/RunProcess",
+        "processName": "{{orderPricingWorkflowProcess}}"
+      },
+      "requiredPayload": {
+        "orderId": "{{orderId}}",
+        "priceListId": "{{priceListId}}"
+      },
+      "optionalPayload": {
+        "pricingMode": "Y"
+      },
+      "inputIdentifiers": ["orderId", "priceListId"],
+      "outputIdentifiers": ["orderId", "orderTotal", "lineTotals"],
+      "sequencingRules": ["Re-query order totals and line items after pricing."],
+      "preconditions": ["Order id exists.", "Price list id exists."],
+      "postconditions": ["Order totals are refreshed."],
+      "commonErrors": ["Order total stale after line update."],
+      "exampleRequest": {
+        "orderId": "88-ORDER",
+        "priceListId": "88-3GSD0O"
+      },
+      "exampleResponse": {
+        "orderId": "88-ORDER",
+        "orderTotal": "$66.00"
+      },
+      "regressionChecks": ["Totals refresh after item add or promotion apply."],
+      "doNotRules": ["Do not trust stale local totals after backend pricing call."],
+      "relatedOperations": ["order-management.retrieve-order-lines-with-hierarchy"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "pricing.refresh-line-item-pricing",
+      "domain": "pricing",
+      "operationName": "Refresh Line Item Pricing",
+      "businessIntent": "Refresh pricing for existing order lines.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{lineItemPricingRefreshEndpoint}}"
+      },
+      "requiredPayload": {
+        "orderId": "{{orderId}}"
+      },
+      "optionalPayload": {
+        "lineItemIds": "{{lineItemIds}}"
+      },
+      "inputIdentifiers": ["orderId", "lineItemIds"],
+      "outputIdentifiers": ["lineItemIds", "netPrices"],
+      "sequencingRules": ["Prefer pricing services/workflows over direct line-item patches."],
+      "preconditions": ["Order lines exist."],
+      "postconditions": ["Line item prices are refreshed."],
+      "commonErrors": ["Required line item fields missing during direct patch."],
+      "exampleRequest": {
+        "orderId": "88-ORDER",
+        "lineItemIds": ["88-LINE"]
+      },
+      "exampleResponse": {
+        "lineItemIds": ["88-LINE"],
+        "status": "priced"
+      },
+      "regressionChecks": ["Refresh does not remove child line items."],
+      "doNotRules": ["Do not patch line item pricing fields directly unless grammar validates required fields."],
+      "relatedOperations": ["pricing.price-order"],
+      "humanValidationStatus": "draft"
+    }
+  ]
+}

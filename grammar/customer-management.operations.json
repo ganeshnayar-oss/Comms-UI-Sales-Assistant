@@ -1,0 +1,261 @@
+{
+  "domain": "customer-management",
+  "version": "0.1.0",
+  "operations": [
+    {
+      "id": "customer-management.create-contact",
+      "domain": "customer-management",
+      "operationName": "Create Contact",
+      "businessIntent": "Create a Siebel contact from natural-language intake or agent action.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/data/Contact/Contact"
+      },
+      "requiredPayload": {
+        "First Name": "{{firstName}}",
+        "Last Name": "{{lastName}}"
+      },
+      "optionalPayload": {
+        "Email Address": "{{email}}",
+        "Work Phone #": "{{phone}}"
+      },
+      "inputIdentifiers": ["firstName", "lastName", "email", "phone"],
+      "outputIdentifiers": ["contactId", "contactName"],
+      "sequencingRules": [
+        "Create contact before account when flow starts from a prospect.",
+        "Reuse returned contact id for account primary contact and order context."
+      ],
+      "preconditions": ["Intake has been parsed."],
+      "postconditions": ["Contact id is stored in workflow state."],
+      "commonErrors": ["Duplicate contact if create is retried without reuse."],
+      "exampleRequest": {
+        "First Name": "Alia",
+        "Last Name": "Herbert",
+        "Email Address": "alia@example.com"
+      },
+      "exampleResponse": {
+        "Id": "88-CONTACT",
+        "First Name": "Alia",
+        "Last Name": "Herbert"
+      },
+      "regressionChecks": ["Intake name is used as contact name, not sample default."],
+      "doNotRules": ["Do not send payment/card information to contact create."],
+      "relatedOperations": ["customer-management.create-residential-account"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "customer-management.create-residential-account",
+      "domain": "customer-management",
+      "operationName": "Create Residential Account",
+      "businessIntent": "Create a residential customer account and associate the created contact as primary contact.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "/siebel/v1.0/service/SWI Customer Party Service/Insert"
+      },
+      "requiredPayload": {
+        "SiebelMessage": {
+          "MessageType": "Integration Object",
+          "IntObjectName": "SWICustomerPartyIO",
+          "IntObjectFormat": "Siebel Hierarchical",
+          "ListOfSWICustomerPartyIO": {
+            "Account": {
+              "Name": "{{accountName}}",
+              "Type": "Residential",
+              "Price List Id": "{{priceListId}}",
+              "Primary Contact Id": "{{contactId}}"
+            }
+          }
+        }
+      },
+      "optionalPayload": {
+        "Account": {
+          "Location": "{{accountSite}}"
+        }
+      },
+      "inputIdentifiers": ["accountName", "contactId", "priceListId"],
+      "outputIdentifiers": ["accountId", "accountName"],
+      "sequencingRules": [
+        "Create or identify contact before account.",
+        "Set account type to Residential unless deployment grammar overrides it.",
+        "Set primary contact id.",
+        "Reuse created account for all later order actions."
+      ],
+      "preconditions": ["Contact id exists.", "Price list id exists when required."],
+      "postconditions": ["Account id is stored in workflow state."],
+      "commonErrors": ["SBL-EAI-04381 duplicate account when account is recreated."],
+      "exampleRequest": {
+        "SiebelMessage": {
+          "MessageType": "Integration Object",
+          "IntObjectName": "SWICustomerPartyIO",
+          "IntObjectFormat": "Siebel Hierarchical",
+          "ListOfSWICustomerPartyIO": {
+            "Account": {
+              "Name": "Alia Herbert",
+              "Type": "Residential",
+              "Price List Id": "88-3GSD0O",
+              "Primary Contact Id": "88-CONTACT"
+            }
+          }
+        }
+      },
+      "exampleResponse": {
+        "Account": {
+          "Id": "88-ACCOUNT",
+          "Name": "Alia Herbert"
+        }
+      },
+      "regressionChecks": [
+        "Account create happens once per workflow.",
+        "Primary contact id is included when contact exists."
+      ],
+      "doNotRules": ["Do not create a new account every time a product is added."],
+      "relatedOperations": ["customer-management.associate-address-to-account", "order-management.apply-bundled-promotion-to-order"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "customer-management.associate-contact-to-account",
+      "domain": "customer-management",
+      "operationName": "Associate Contact To Account",
+      "businessIntent": "Associate a contact to an account and make it the primary contact when required.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{accountContactAssociationEndpoint}}"
+      },
+      "requiredPayload": {
+        "accountId": "{{accountId}}",
+        "contactId": "{{contactId}}"
+      },
+      "optionalPayload": {
+        "primary": true
+      },
+      "inputIdentifiers": ["accountId", "contactId"],
+      "outputIdentifiers": ["accountId", "contactId"],
+      "sequencingRules": ["Run only after both account and contact exist."],
+      "preconditions": ["Account id exists.", "Contact id exists."],
+      "postconditions": ["Account has contact relationship."],
+      "commonErrors": ["HTTP 404 for incorrect relationship endpoint."],
+      "exampleRequest": {
+        "accountId": "88-ACCOUNT",
+        "contactId": "88-CONTACT",
+        "primary": true
+      },
+      "exampleResponse": {
+        "status": "associated"
+      },
+      "regressionChecks": ["Order account association can use account created from contact flow."],
+      "doNotRules": ["Do not infer association from matching names only."],
+      "relatedOperations": ["customer-management.create-residential-account"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "customer-management.associate-address-to-account",
+      "domain": "customer-management",
+      "operationName": "Associate Address To Account",
+      "businessIntent": "Use contact or intake address as account address.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{accountAddressEndpoint}}"
+      },
+      "requiredPayload": {
+        "accountId": "{{accountId}}",
+        "address": "{{address}}"
+      },
+      "optionalPayload": {
+        "addressType": "Residential"
+      },
+      "inputIdentifiers": ["accountId", "address"],
+      "outputIdentifiers": ["addressId"],
+      "sequencingRules": ["Run after account create when intake/contact address is used."],
+      "preconditions": ["Account id exists.", "Address exists."],
+      "postconditions": ["Account has associated address."],
+      "commonErrors": ["Address only saved locally and missing in Siebel."],
+      "exampleRequest": {
+        "accountId": "88-ACCOUNT",
+        "address": "123 East 85th Street, Apt 5G, New York, NY 10028"
+      },
+      "exampleResponse": {
+        "addressId": "88-ADDRESS"
+      },
+      "regressionChecks": ["Using contact address associates address to account."],
+      "doNotRules": ["Do not skip backend address association when user says use contact address."],
+      "relatedOperations": ["customer-management.create-residential-account"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "customer-management.retrieve-account-profile",
+      "domain": "customer-management",
+      "operationName": "Retrieve Account Profile",
+      "businessIntent": "Retrieve account profile for workflow or Customer 360.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Account/Account/{{accountId}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {},
+      "inputIdentifiers": ["accountId"],
+      "outputIdentifiers": ["accountId", "accountName", "status", "address", "phone", "email"],
+      "sequencingRules": ["Query by account id when available."],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Account data is available for UI rendering."],
+      "commonErrors": ["HTTP 404 for missing or incorrectly encoded account id."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Account/Account/88-ACCOUNT"
+      },
+      "exampleResponse": {
+        "Id": "88-ACCOUNT",
+        "Name": "Alia Herbert",
+        "Status": "Active"
+      },
+      "regressionChecks": ["Customer 360 uses created account after order submission."],
+      "doNotRules": ["Do not query generic first account when workflow account id exists."],
+      "relatedOperations": ["customer-360.retrieve-account-profile"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "customer-management.create-and-associate-billing-profile",
+      "domain": "customer-management",
+      "operationName": "Create And Associate Billing Profile",
+      "businessIntent": "Create billing profile information for an account when required by billing or order flows.",
+      "preferredApiType": "Service API",
+      "endpoint": {
+        "method": "POST",
+        "path": "{{billingProfileEndpoint}}"
+      },
+      "requiredPayload": {
+        "accountId": "{{accountId}}",
+        "billingAddress": "{{billingAddress}}"
+      },
+      "optionalPayload": {
+        "billingAccountId": "{{billingAccountId}}",
+        "paymentTerms": "{{paymentTerms}}"
+      },
+      "inputIdentifiers": ["accountId", "billingAddress", "billingAccountId"],
+      "outputIdentifiers": ["billingProfileId"],
+      "sequencingRules": [
+        "Run after account exists.",
+        "Run only when billing setup is reached.",
+        "Reuse an existing billing profile when present."
+      ],
+      "preconditions": ["Account id exists."],
+      "postconditions": ["Billing profile is associated to account."],
+      "commonErrors": ["Duplicate billing profile when create is repeated."],
+      "exampleRequest": {
+        "accountId": "88-ACCOUNT",
+        "billingAddress": "123 East 85th Street, Apt 5G, New York, NY 10028"
+      },
+      "exampleResponse": {
+        "billingProfileId": "88-BILLPROFILE"
+      },
+      "regressionChecks": ["Billing profile is not created during product add."],
+      "doNotRules": ["Do not create duplicate billing profiles for repeated cart actions."],
+      "relatedOperations": ["order-management.assign-billing-and-service-accounts"],
+      "humanValidationStatus": "draft"
+    }
+  ]
+}

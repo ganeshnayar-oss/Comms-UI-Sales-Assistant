@@ -1,0 +1,213 @@
+{
+  "domain": "catalog",
+  "version": "0.1.0",
+  "operations": [
+    {
+      "id": "catalog.browse-catalog-hierarchy",
+      "domain": "catalog",
+      "operationName": "Browse Catalog Hierarchy",
+      "businessIntent": "Show navigable catalog categories with products underneath each category.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{catalogHierarchyEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "catalogName": "{{catalogName}}",
+        "priceListName": "{{priceListName}}"
+      },
+      "inputIdentifiers": ["catalogName", "priceListName"],
+      "outputIdentifiers": ["categoryId", "productId", "productType", "priceListId"],
+      "sequencingRules": [
+        "Resolve catalog before browse.",
+        "Resolve price list before presenting priced products.",
+        "Preserve category-product hierarchy for browse mode."
+      ],
+      "preconditions": ["Catalog is configured or supplied by the user."],
+      "postconditions": ["UI can render categories and child products."],
+      "commonErrors": ["HTTP 404 for incorrect catalog endpoint."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Catalog/Catalog/?searchspec=[Name]=\"Supremo Catalog\""
+      },
+      "exampleResponse": {
+        "categories": [
+          {
+            "id": "cat-mobile",
+            "name": "Mobile Plans",
+            "products": [
+              {
+                "id": "prod-001",
+                "name": "Supremo Mobile Unlimited",
+                "type": "Promotion"
+              }
+            ]
+          }
+        ]
+      },
+      "regressionChecks": [
+        "Browse renders category hierarchy.",
+        "Search and browse remain separate tabs."
+      ],
+      "doNotRules": ["Do not flatten browse hierarchy into search-only results."],
+      "relatedOperations": ["catalog.retrieve-products-by-category", "catalog.identify-promotion-versus-simple-product"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "catalog.search-products-by-name",
+      "domain": "catalog",
+      "operationName": "Search Products By Name",
+      "businessIntent": "Find products in the active catalog by product name.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{catalogProductSearchEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "query": "{{productName}}",
+        "catalogName": "{{catalogName}}",
+        "priceListName": "{{priceListName}}"
+      },
+      "inputIdentifiers": ["productName", "catalogName", "priceListName"],
+      "outputIdentifiers": ["productId", "productName", "productType", "prodPromId"],
+      "sequencingRules": [
+        "Search by product name first.",
+        "Do not require agents to type catalog or price list in the search bar.",
+        "Use configured catalog and price list context."
+      ],
+      "preconditions": ["Catalog context is known."],
+      "postconditions": ["Matching products are available for review/add."],
+      "commonErrors": ["HTTP 404 for invalid product endpoint."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "/siebel/v1.0/data/Product/Product/?searchspec=[Name] LIKE \"*mobile*\""
+      },
+      "exampleResponse": {
+        "items": [
+          {
+            "id": "88-PROD",
+            "name": "Supremo Mobile Unlimited",
+            "type": "Promotion",
+            "description": "Good for students and folks who are on the move."
+          }
+        ]
+      },
+      "regressionChecks": ["Search only filters by product name unless grammar says otherwise."],
+      "doNotRules": ["Do not merge search and browse into one behavior."],
+      "relatedOperations": ["catalog.identify-promotion-versus-simple-product"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "catalog.retrieve-products-by-category",
+      "domain": "catalog",
+      "operationName": "Retrieve Products By Category",
+      "businessIntent": "Show products under a selected catalog category.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{categoryProductsEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "categoryId": "{{categoryId}}",
+        "catalogName": "{{catalogName}}"
+      },
+      "inputIdentifiers": ["categoryId", "catalogName"],
+      "outputIdentifiers": ["productId", "productName", "productType"],
+      "sequencingRules": ["Resolve selected category before fetching products."],
+      "preconditions": ["Category exists in catalog hierarchy."],
+      "postconditions": ["UI refreshes to show category products."],
+      "commonErrors": ["No products returned for invalid category id."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "{{categoryProductsEndpoint}}?categoryId={{categoryId}}"
+      },
+      "exampleResponse": {
+        "category": "Mobile Plans",
+        "products": []
+      },
+      "regressionChecks": ["Selecting Mobile Plans refreshes product list under Mobile Plans."],
+      "doNotRules": ["Do not discard product type metadata."],
+      "relatedOperations": ["catalog.search-products-by-name"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "catalog.identify-promotion-versus-simple-product",
+      "domain": "catalog",
+      "operationName": "Identify Promotion Versus Simple Product",
+      "businessIntent": "Route add-to-cart to either simple item add or promotion workflow.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{productDetailEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "productId": "{{productId}}"
+      },
+      "inputIdentifiers": ["productId"],
+      "outputIdentifiers": ["productType", "prodPromId"],
+      "sequencingRules": [
+        "If product type is promotion or bundled promotion, use order-management.apply-bundled-promotion-to-order.",
+        "If product type is not promotion, use order-management.add-simple-product-to-order."
+      ],
+      "preconditions": ["Product selected."],
+      "postconditions": ["Correct order operation is selected."],
+      "commonErrors": ["Promotion added as simple line item and child items missing."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "{{productDetailEndpoint}}/{{productId}}"
+      },
+      "exampleResponse": {
+        "id": "88-255DX",
+        "name": "Supremo Mobile Unlimited",
+        "type": "Promotion"
+      },
+      "regressionChecks": [
+        "Promotion uses ProdPromId workflow path.",
+        "Simple product uses item add path."
+      ],
+      "doNotRules": ["Do not add a bundled promotion as a single parent-only line item."],
+      "relatedOperations": ["order-management.apply-bundled-promotion-to-order", "order-management.add-simple-product-to-order"],
+      "humanValidationStatus": "draft"
+    },
+    {
+      "id": "catalog.resolve-price-list",
+      "domain": "catalog",
+      "operationName": "Resolve Price List",
+      "businessIntent": "Resolve configured price list name into the id required for pricing and order APIs.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "GET",
+        "path": "{{priceListEndpoint}}"
+      },
+      "requiredPayload": {},
+      "optionalPayload": {
+        "priceListName": "{{priceListName}}"
+      },
+      "inputIdentifiers": ["priceListName"],
+      "outputIdentifiers": ["priceListId", "priceListName"],
+      "sequencingRules": [
+        "Resolve price list before order create, simple item add, or promotion apply.",
+        "Store both price list id and name."
+      ],
+      "preconditions": ["Price list name is configured or supplied."],
+      "postconditions": ["priceListId is available for order operations."],
+      "commonErrors": ["Pricing fails because price list id is missing."],
+      "exampleRequest": {
+        "method": "GET",
+        "path": "{{priceListEndpoint}}?searchspec=[Name]=\"DBE NA Pricelist\""
+      },
+      "exampleResponse": {
+        "id": "88-3GSD0O",
+        "name": "DBE NA Pricelist"
+      },
+      "regressionChecks": ["Promotion payload includes Price List Id."],
+      "doNotRules": ["Do not rely only on price list display name when id is required."],
+      "relatedOperations": ["order-management.create-sales-order", "order-management.apply-bundled-promotion-to-order"],
+      "humanValidationStatus": "draft"
+    }
+  ]
+}
