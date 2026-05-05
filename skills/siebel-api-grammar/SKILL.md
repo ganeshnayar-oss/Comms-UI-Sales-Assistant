@@ -32,13 +32,49 @@ Read these files before editing grammar:
 
 1. Interpret the user's natural-language request as a Siebel business intent.
 2. Pick the closest domain and operation.
-3. If the operation exists, update both the Markdown domain file and the matching `grammar/*.operations.json`.
-4. If the operation does not exist, add a new operation to both files.
-5. Preserve the operation schema from `docs/siebel-api-grammar/grammar-schema.md`.
-6. Include business intent, preferred API type, endpoint, required payload, optional payload, sequencing rules, common errors, example request, example response, regression checks, and do-not rules.
-7. Mark new entries as `draft` unless the user says the API was validated.
-8. Validate all edited JSON files.
-9. Do not change application code unless the user explicitly asks for implementation.
+3. If the operation requires API discovery, perform discovery first and stop for confirmation before finalizing the grammar.
+4. If the operation exists, update both the Markdown domain file and the matching `grammar/*.operations.json`.
+5. If the operation does not exist, add a new operation to both files.
+6. Preserve the operation schema from `docs/siebel-api-grammar/grammar-schema.md`.
+7. Include business intent, preferred API type, endpoint, required payload, optional payload, sequencing rules, common errors, example request, example response, regression checks, and do-not rules.
+8. Mark new entries as `draft` unless the user says the API was validated.
+9. Validate all edited JSON files.
+10. Do not change application code unless the user explicitly asks for implementation.
+
+## API Discovery Confirmation Gate
+
+Use this gate whenever the endpoint, API type, workflow process, business service, required payload, or sequencing is unknown or inferred.
+
+Discovery sources can include:
+
+- Existing repo code such as `server.mjs`, `src/api/siebelApi.js`, and prior grammar entries.
+- User-provided payloads, network traces, screenshots, or errors.
+- Siebel documentation or environment discovery when the user authorizes it.
+- Safe test calls against non-production environments when the user authorizes them.
+
+After discovery, stop and present a concise confirmation summary before marking the entry `reviewed` or using it for implementation:
+
+```text
+Discovered operation:
+- Business intent:
+- Domain:
+- Preferred API type:
+- Endpoint or workflow/service:
+- Required payload:
+- Sequencing:
+- Risks/unknowns:
+- Proposed validation status:
+
+Please confirm this is correct before I update the grammar as reviewed/validated or implement against it.
+```
+
+Rules:
+
+- If the user confirms, update the grammar and set `humanValidationStatus` to `reviewed` unless the user says it was tested end-to-end.
+- If the user says it was tested successfully, set `humanValidationStatus` to `validated`.
+- If the user does not confirm, keep the entry `draft` and clearly mark unknowns with template placeholders.
+- Do not silently convert a discovered guess into a validated grammar rule.
+- Do not implement app code against a newly discovered API until the user confirms the discovered mapping or explicitly accepts a `draft` implementation.
 
 ## API Selection Rules
 
