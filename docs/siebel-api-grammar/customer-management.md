@@ -36,6 +36,26 @@ Sequencing rules:
 - Set price list id when required by account service.
 - Reuse the created account for the rest of the workflow.
 
+### Update Account
+
+Business intent: Update editable account fields such as name, type, phone, email, account site, status, or profile attributes after the account already exists.
+
+Preferred API type: Data API for simple account field updates. Use Service API instead when the update must maintain related objects, trigger account lifecycle logic, or update address/contact/billing profile relationships.
+
+Endpoint:
+
+```text
+PATCH /siebel/v1.0/data/Account/Account/{{accountId}}
+```
+
+Sequencing rules:
+
+- Requires account id.
+- Send only the fields being changed.
+- Use service-specific operations for address, contact relationship, billing profile, or account lifecycle changes.
+- Do not recreate the account to correct account details.
+- Re-query the account after update when UI or downstream order logic depends on the changed fields.
+
 ### Associate Contact To Account
 
 Business intent: Make the created contact the primary contact for the account.

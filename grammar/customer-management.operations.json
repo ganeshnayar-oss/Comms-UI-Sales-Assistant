@@ -115,6 +115,73 @@
       "humanValidationStatus": "draft"
     },
     {
+      "id": "customer-management.update-account",
+      "domain": "customer-management",
+      "operationName": "Update Account",
+      "businessIntent": "Update editable fields on an existing Siebel account.",
+      "preferredApiType": "Data API",
+      "endpoint": {
+        "method": "PATCH",
+        "path": "/siebel/v1.0/data/Account/Account/{{accountId}}"
+      },
+      "requiredPayload": {
+        "Id": "{{accountId}}"
+      },
+      "optionalPayload": {
+        "Name": "{{accountName}}",
+        "Type": "{{accountType}}",
+        "Location": "{{accountSite}}",
+        "Main Phone Number": "{{phone}}",
+        "Email Address": "{{email}}",
+        "Status": "{{status}}"
+      },
+      "inputIdentifiers": ["accountId"],
+      "outputIdentifiers": ["accountId", "accountName"],
+      "sequencingRules": [
+        "Requires account id.",
+        "Send only the fields being changed.",
+        "Use service-specific operations for address, contact relationship, billing profile, or account lifecycle changes.",
+        "Do not recreate the account to correct account details.",
+        "Re-query the account after update when UI or downstream order logic depends on changed fields."
+      ],
+      "preconditions": ["Account id exists.", "Requested fields are editable for the authenticated user/responsibility."],
+      "postconditions": ["Account fields are updated in Siebel."],
+      "commonErrors": [
+        "HTTP 404 for missing or incorrectly encoded account id.",
+        "HTTP 405 when Data API PATCH is not enabled for the target business component.",
+        "SBL-DAT-00825 when the user lacks update access.",
+        "Required or read-only field errors when the payload includes fields that should not be patched."
+      ],
+      "exampleRequest": {
+        "Name": "Alia Herbert",
+        "Type": "Residential",
+        "Location": "New York"
+      },
+      "exampleResponse": {
+        "Id": "88-ACCOUNT",
+        "Name": "Alia Herbert",
+        "Type": "Residential",
+        "Location": "New York"
+      },
+      "regressionChecks": [
+        "Account update does not create a duplicate account.",
+        "Account update does not remove primary contact, address, billing profile, or order association.",
+        "Only changed account fields are included in the PATCH payload."
+      ],
+      "doNotRules": [
+        "Do not recreate an account to fix editable account details.",
+        "Do not use generic account PATCH for address association, primary contact association, or billing profile creation.",
+        "Do not include read-only fields or unrelated integration component payloads."
+      ],
+      "relatedOperations": [
+        "customer-management.retrieve-account-profile",
+        "customer-management.associate-contact-to-account",
+        "customer-management.associate-address-to-account",
+        "customer-management.create-and-associate-billing-profile"
+      ],
+      "humanValidationStatus": "draft"
+    },
+    {
       "id": "customer-management.associate-contact-to-account",
       "domain": "customer-management",
       "operationName": "Associate Contact To Account",
