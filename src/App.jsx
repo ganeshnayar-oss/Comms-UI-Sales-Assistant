@@ -15,16 +15,30 @@ import {
   getSiebelServicePreview,
   getSiebelServiceRequests,
   getSiebelServiceSummary,
+  parseIntakePrompt,
+  parseWorkflowAction,
   updateSiebelOrder,
 } from "./api/siebelApi";
 import {
-  DEFAULT_CUSTOMER_CONFIG_KEY,
-  getCustomerConfig,
+  getRuntimeCustomerConfig,
   getMatchingRecommendationRules,
+  isLlmModeEnabled,
 } from "./extensions/customerConfig";
+import {
+  extractNaturalName,
+  splitName,
+  toTitleCase,
+} from "./domain/intakeParsing";
+import { LOCALE_LABELS, getSupportedLocale, translateStaticText } from "./i18n/languagePacks";
+import { useRuntimeLocalization } from "./i18n/useRuntimeLocalization";
 
-const CUSTOMER_CONFIG = getCustomerConfig(import.meta.env.VITE_CUSTOMER_CONFIG || DEFAULT_CUSTOMER_CONFIG_KEY);
+const CUSTOMER_CONFIG = getRuntimeCustomerConfig();
 const APP_TITLE = CUSTOMER_CONFIG.brand.workflowTitle;
+const IS_LLM_MODE_ENABLED = isLlmModeEnabled(CUSTOMER_CONFIG);
+const DEFAULT_LOCALE = getSupportedLocale(CUSTOMER_CONFIG.globalization?.defaultLocale || "en-US");
+const SUPPORTED_LOCALES = (CUSTOMER_CONFIG.globalization?.supportedLocales || ["en-US", "fr-FR", "es-ES"])
+  .map((locale) => getSupportedLocale(locale))
+  .filter((locale, index, locales) => locales.indexOf(locale) === index);
 
 const HOME_ACTIVITIES = [
   { title: "Supremo Oppurtunity", detail: "New opportunity created at 1:26 PM", icon: "☰" },
@@ -44,6 +58,7 @@ const TASK_ITEMS = [
 const DEFAULT_ADDRESS = "123 East 85th Street, Apt 5G, New York, NY 10028";
 const DEFAULT_SIEBEL_CATALOG = CUSTOMER_CONFIG.defaults.catalogName;
 const DEFAULT_SIEBEL_PRICE_LIST = CUSTOMER_CONFIG.defaults.priceListName;
+const DEFAULT_PROMOTION_ORDER_NUMBER_PREFIX = CUSTOMER_CONFIG.defaults.promotionOrderNumberPrefix || "DX4C_O1";
 const INTAKE_PROMPT = CUSTOMER_CONFIG.defaults.intakePrompt;
 const INTAKE_PLACEHOLDER = CUSTOMER_CONFIG.defaults.intakePlaceholder;
 
@@ -296,41 +311,6 @@ function normalizeSpacing(value) {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function toTitleCase(value) {
-  return value
-    .split(/\s+/)
-    .filter(Boolean)
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
-    .join(" ");
-}
-
-function splitName(name) {
-  const normalized = normalizeSpacing(name || "James Kelly");
-  const parts = normalized.split(" ").filter(Boolean);
-  const firstName = parts[0] || "James";
-  const lastName = parts.slice(1).join(" ") || "Kelly";
-  return {
-    name: parts.length > 1 ? `${firstName} ${lastName}` : firstName,
-    firstName,
-    lastName,
-  };
-}
-
-function parseIntakeDetails(input) {
-  const normalized = normalizeSpacing(input || "");
-  const addressMatch = normalized.match(/\baddress\s+is\s+(.+?)(?=(?:\.\s+[A-Z]|,\s*(?:he|she|they)\b|$))/i);
-  const explicitNameMatch = normalized.match(/\b(?:his|her|their|customer|contact)?\s*name\s+is\s+([^,.]+)/i);
-  const leadingNameMatch = normalized.match(/^([A-Z][A-Za-z'-]+(?:\s+[A-Z][A-Za-z'-]+){0,2})(?=\s+(?:is|needs|requires|wants|would|located|lives)\b)/);
-  const rawName = explicitNameMatch?.[1] || leadingNameMatch?.[1] || "James Kelly";
-  const cleanedName = toTitleCase(rawName.replace(/\b(?:the customer|customer)\b/gi, "").trim());
-  const parsedName = splitName(cleanedName);
-
-  return {
-    ...parsedName,
-    address: addressMatch?.[1]?.trim().replace(/[.]+$/, "") || DEFAULT_ADDRESS,
-  };
-}
-
 function getContactName(state) {
   if (state.customer?.name) {
     return state.customer.name;
@@ -424,9 +404,19 @@ function createWorkflowState(initialDetails = {}) {
   const catalogName = initialDetails.catalogName || DEFAULT_SIEBEL_CATALOG;
   const priceListName = initialDetails.priceListName || DEFAULT_SIEBEL_PRICE_LIST;
   const intakePrompt = initialDetails.intakePrompt || INTAKE_PROMPT;
+  const intakeAnalysis = initialDetails.intakeAnalysis || {
+    source: "fallback",
+    prospectType: "",
+    customerSegment: "",
+    productInterest: "",
+    requestedProductCategories: [],
+    intentSummary: intakePrompt,
+    detail: "",
+  };
 
   return {
     intakePrompt,
+    intakeAnalysis,
     selectedProductId: "",
     catalogSelectionId: PRODUCTS[0].id,
     catalogName,
@@ -475,12 +465,9 @@ function createWorkflowState(initialDetails = {}) {
       makeMessage("assistant", "A few details have been added to the order. Next capture account details before product selection."),
       makeMessage(
         "assistant",
-        `Which account should I create for this sale? Once that is ready I will use catalog ${catalogName} and price list ${priceListName} for product selection unless you want different values.`,
+        "Which account should I create for this sale? Once that is ready I can move to product selection or apply the recommendation directly.",
       ),
-      makeMessage(
-        "assistant",
-        "After the account is created, you can view the catalog for mobile and internet or review the recommendation.",
-      ),
+      makeMessage("assistant", "After the account is created, you can browse product categories or review the recommendation."),
     ],
   };
 }
@@ -1016,35 +1003,6 @@ function parseNaturalContactCommand(input, state) {
   };
 }
 
-function extractNaturalName(input) {
-  const sameAsAccountPattern = /\b(?:the\s+)?same\s+as\s+account\b/i;
-  const patterns = [
-    /\buse account as\s+([a-z][a-z'-]+(?:\s+[a-z][a-z'-]+){1,2})/i,
-    /\bcreate account(?:\s+(?:for|as|named))?(?:\s+(?:with\s+name|name))?\s+([a-z][a-z'-]+(?:\s+[a-z][a-z'-]+){1,2})/i,
-    /\bprimary contact(?: name)?\s+is\s+([a-z][a-z'-]+(?:\s+[a-z][a-z'-]+){1,2})/i,
-    /\baccount name is\s+([a-z][a-z'-]+(?:\s+[a-z][a-z'-]+){1,2})/i,
-    /\bname is\s+([a-z][a-z'-]+(?:\s+[a-z][a-z'-]+){1,2})/i,
-    /\bcontact is\s+([a-z][a-z'-]+(?:\s+[a-z][a-z'-]+){1,2})/i,
-    /\bnamed\s+([a-z][a-z'-]+(?:\s+[a-z][a-z'-]+){1,2})/i,
-  ];
-
-  for (const pattern of patterns) {
-    const match = input.match(pattern);
-    if (match?.[1]) {
-      const cleaned = match[1]
-        .replace(/^(?:as|for|named)\s+/i, "")
-        .replace(/^(?:with\s+name|name)\s+/i, "")
-        .trim();
-      if (sameAsAccountPattern.test(cleaned)) {
-        continue;
-      }
-      return toTitleCase(cleaned);
-    }
-  }
-
-  return "";
-}
-
 function parseNaturalAccountCommand(input, state) {
   const defaults = parseAccountInput(SAMPLE_ACCOUNT_INPUT, state.customer.firstName);
   const currentName = getContactName(state);
@@ -1223,6 +1181,7 @@ function CustomerInsight({ item }) {
 
 function App() {
   const [view, setView] = useState("home");
+  const [locale, setLocale] = useState(() => getSupportedLocale(localStorage.getItem("salesAssistantLocale") || DEFAULT_LOCALE));
   const [intakeExpanded, setIntakeExpanded] = useState(false);
   const [intakeDraft, setIntakeDraft] = useState(INTAKE_PLACEHOLDER);
   const [workflow, setWorkflow] = useState(createWorkflowState);
@@ -1234,6 +1193,8 @@ function App() {
   const [smartActionDraft, setSmartActionDraft] = useState("");
   const [assistantCollapsed, setAssistantCollapsed] = useState(false);
   const [notification, setNotification] = useState("");
+  const [pendingIntakeRecommendationId, setPendingIntakeRecommendationId] = useState("");
+  const [isApplyingIntakeRecommendation, setIsApplyingIntakeRecommendation] = useState(false);
   const [drawer, setDrawer] = useState(null);
   const [drawerDraft, setDrawerDraft] = useState({});
   const [expandedCartRows, setExpandedCartRows] = useState({});
@@ -1252,6 +1213,28 @@ function App() {
     resolvedPriceListId: "",
   });
 
+  useRuntimeLocalization(locale);
+
+  useEffect(() => {
+    localStorage.setItem("salesAssistantLocale", locale);
+  }, [locale]);
+
+  useEffect(() => {
+    const localizedDefaults = SUPPORTED_LOCALES.map((supportedLocale) => translateStaticText(INTAKE_PLACEHOLDER, supportedLocale));
+    setIntakeDraft((current) =>
+      current === INTAKE_PLACEHOLDER || localizedDefaults.includes(current)
+        ? translateStaticText(INTAKE_PLACEHOLDER, locale)
+        : current
+    );
+  }, [locale]);
+
+  function formatLocalizedMoney(value) {
+    return new Intl.NumberFormat(locale, {
+      style: "currency",
+      currency: "USD",
+    }).format(parseMoneyValue(value));
+  }
+
   const activeProducts = useMemo(() => {
     if (catalogState.categories?.length) {
       const seen = new Map();
@@ -1267,15 +1250,25 @@ function App() {
 
     return catalogState.products?.length ? catalogState.products : PRODUCTS;
   }, [catalogState.categories, catalogState.products]);
-  const filteredProducts = useMemo(() => {
-    const query = catalogState.query.trim();
-    if (!query) {
+  const categoryFilteredProducts = useMemo(() => {
+    if (!catalogState.browseCategoryId) {
       return activeProducts;
     }
 
+    const selectedCategory =
+      catalogState.categories.find((category) => category.id === catalogState.browseCategoryId) ?? null;
+
+    return selectedCategory?.products?.length ? selectedCategory.products : activeProducts;
+  }, [activeProducts, catalogState.browseCategoryId, catalogState.categories]);
+  const filteredProducts = useMemo(() => {
+    const query = catalogState.query.trim();
+    if (!query) {
+      return categoryFilteredProducts;
+    }
+
     const matcher = new RegExp(escapeRegExp(query), "i");
-    return activeProducts.filter((product) => matcher.test(product.name));
-  }, [activeProducts, catalogState.query]);
+    return categoryFilteredProducts.filter((product) => matcher.test(product.name));
+  }, [categoryFilteredProducts, catalogState.query]);
   const selectedProduct = useMemo(
     () =>
       activeProducts.find((product) => product.id === workflow.selectedProductId) ??
@@ -1430,7 +1423,7 @@ function App() {
       case "product":
         return {
           title: "Next step",
-          body: `Which catalog should I query and what price list should I use? Defaulting to ${workflow.catalogName} and ${workflow.priceListName}. Then review the recommendation or open the catalog and add a product to the cart.`,
+          body: "Review the recommendation or open the catalog and add a product to the cart.",
         };
       case "service":
         return {
@@ -1492,14 +1485,14 @@ function App() {
       cards.push({
         id: "next-product",
         title: `Add ${topProduct.name} to the cart`,
-        body: `${semanticRecommendation?.reason || topProduct.recommendation} Query catalog ${workflow.catalogName} with price list ${workflow.priceListName}.`,
+        body: semanticRecommendation?.reason || topProduct.recommendation,
         action: "Add",
         onClick: () => applyProductSelection(topProduct.id),
       });
       cards.push({
         id: "catalog",
         title: "View product catalog",
-        body: `Search ${catalogState.resolvedCatalogName || workflow.catalogName} using ${catalogState.resolvedPriceListName || workflow.priceListName} and add the right product from either the assistant or the canvas.`,
+        body: "Browse the available product categories and add the right product from either the assistant or the canvas.",
         action: "Open",
         onClick: () => reviewCatalogProduct(topProduct.id),
       });
@@ -1764,6 +1757,55 @@ function App() {
     }));
   }, [activeProducts, recommendedProduct?.id, view, workflow.catalogSelectionId]);
 
+  useEffect(() => {
+    if (view !== "workflow" || !pendingIntakeRecommendationId || isApplyingIntakeRecommendation) {
+      return;
+    }
+
+    let cancelled = false;
+
+    async function applyIntakeRecommendation() {
+      setIsApplyingIntakeRecommendation(true);
+
+      try {
+        const contactRecord = await ensureSiebelContactRecord();
+        if (cancelled) {
+          return;
+        }
+
+        const accountRecord = workflow.siebelAccount?.id ? workflow.siebelAccount : await ensureRecommendedAccountProfile();
+        if (cancelled) {
+          return;
+        }
+
+        await applyProductSelection(pendingIntakeRecommendationId, {
+          contactRecord,
+          accountId: accountRecord?.id || "",
+          accountName: accountRecord?.name || "",
+        });
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        const detail = error instanceof Error ? error.message : "Unknown intake recommendation error.";
+        pushMessages([makeMessage("assistant", `I couldn't apply the recommendation from intake automatically. ${detail}`)]);
+        setNotification("Unable to apply the recommendation from intake.");
+      } finally {
+        if (!cancelled) {
+          setPendingIntakeRecommendationId("");
+          setIsApplyingIntakeRecommendation(false);
+        }
+      }
+    }
+
+    applyIntakeRecommendation();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isApplyingIntakeRecommendation, pendingIntakeRecommendationId, view, workflow.siebelAccount]);
+
   function updateWorkflow(mutator) {
     setWorkflow((current) => mutator(current));
   }
@@ -1922,6 +1964,8 @@ function App() {
     setIntakeExpanded(false);
     setIntakeDraft(INTAKE_PLACEHOLDER);
     setNotification("");
+    setPendingIntakeRecommendationId("");
+    setIsApplyingIntakeRecommendation(false);
   }
 
   function expandIntake() {
@@ -1929,18 +1973,53 @@ function App() {
     setIntakeDraft(INTAKE_PROMPT);
   }
 
-  async function startWorkflow() {
-    const parsedIntake = parseIntakeDetails(intakeDraft);
+  async function startWorkflow(options = {}) {
+    const { autoRecommendProductId = "" } = options;
+    let intakeResult;
+    try {
+      intakeResult = await parseIntakePrompt(intakeDraft.trim() || INTAKE_PROMPT);
+    } catch (error) {
+      setNotification(`Intake parsing failed. ${error instanceof Error ? error.message : "Unknown LLM parse error."}`);
+      return;
+    }
+
+    const parsedIntake = {
+      name: intakeResult.contactName,
+      firstName: intakeResult.firstName,
+      lastName: intakeResult.lastName,
+      address: intakeResult.address || DEFAULT_ADDRESS,
+    };
     setWorkflow(
       createWorkflowState({
         name: parsedIntake.name,
         address: parsedIntake.address,
         intakePrompt: intakeDraft.trim() || INTAKE_PROMPT,
+        intakeAnalysis: {
+          source: intakeResult.source || "fallback",
+          prospectType: intakeResult.prospectType || "",
+          customerSegment: intakeResult.customerSegment || "",
+          productInterest: intakeResult.productInterest || "",
+          requestedProductCategories: intakeResult.requestedProductCategories || [],
+          intentSummary: intakeResult.intentSummary || intakeDraft.trim() || INTAKE_PROMPT,
+          detail: intakeResult.detail || "",
+        },
       }),
     );
-    setNotification("");
+    setNotification(
+      intakeResult.source === "llm"
+        ? "LLM intake parsed successfully."
+        : intakeResult.source === "deterministic"
+          ? "Runtime config is set to deterministic intake parsing."
+        : `LLM intake unavailable. Using fallback parsing${intakeResult.detail ? `: ${intakeResult.detail}` : "."}`,
+    );
     setDrawer(null);
     setView("workflow");
+
+    if (autoRecommendProductId) {
+      setPendingIntakeRecommendationId(autoRecommendProductId);
+      setNotification("Creating the contact, account, and recommended order from the intake details.");
+      return;
+    }
 
     try {
       const contact = await createSiebelContact({
@@ -2092,6 +2171,7 @@ function App() {
     setCatalogState((current) => ({
       ...current,
       browseCategoryId: categoryId,
+      view: current.view,
     }));
   }
 
@@ -2138,7 +2218,7 @@ function App() {
       }
 
       const nextLineNumber = workflow.cartItems.length + 1;
-      const promotionOrderNumber = orderNumber || `DX4C_O1${Date.now()}`;
+      const promotionOrderNumber = orderNumber || `${DEFAULT_PROMOTION_ORDER_NUMBER_PREFIX}${Date.now()}`;
       const orderItemResponse = isBundledPromotion
         ? await applySiebelPromotion(orderId || "new", {
             prodPromId: product.siebelProductId || product.id,
@@ -2618,7 +2698,271 @@ function App() {
     }
   }
 
-  async function processActionInput(input, source) {
+  function applyCatalogPreferences(preferences = {}) {
+    const nextCatalogName = preferences.catalogName || workflow.catalogName || DEFAULT_SIEBEL_CATALOG;
+    const nextPriceListName = preferences.priceListName || workflow.priceListName || DEFAULT_SIEBEL_PRICE_LIST;
+
+    updateWorkflow((current) => ({
+      ...current,
+      catalogName: nextCatalogName,
+      priceListName: nextPriceListName,
+      messages: [
+        ...current.messages,
+        makeMessage(
+          "assistant",
+          `I will query catalog ${nextCatalogName} with price list ${nextPriceListName} for product selection.`,
+        ),
+      ],
+    }));
+    setNotification(`Catalog set to ${nextCatalogName}. Price list set to ${nextPriceListName}.`);
+    setDrawer(null);
+  }
+
+  function findProductByActionName(productName) {
+    const normalizedName = normalizeRecommendationText(productName);
+    if (!normalizedName) {
+      return null;
+    }
+
+    const candidateProducts = [
+      ...activeProducts,
+      ...catalogState.categories.flatMap((category) => category.products || []),
+    ];
+    const uniqueProducts = [...new Map(candidateProducts.map((product) => [product.id, product])).values()];
+    const exactMatch = uniqueProducts.find((product) => normalizeRecommendationText(product.name) === normalizedName);
+    if (exactMatch) {
+      return exactMatch;
+    }
+
+    const partialMatch = uniqueProducts.find((product) => normalizeRecommendationText(product.name).includes(normalizedName));
+    if (partialMatch) {
+      return partialMatch;
+    }
+
+    return findProductByText(uniqueProducts, productName);
+  }
+
+  async function createContactFromParsedAction(action) {
+    const parsedIdentity = splitName(
+      action.contactName || [action.firstName, action.lastName].filter(Boolean).join(" ").trim() || getContactName(workflow),
+      getContactName(workflow),
+    );
+    const contact = await createSiebelContact({
+      firstName: action.firstName || parsedIdentity.firstName,
+      lastName: action.lastName || parsedIdentity.lastName,
+      email: action.email || workflow.account.email || "",
+      workPhone: sanitizeDigits(action.phone || workflow.account.workPhone || workflow.account.mobileNumber || ""),
+      accountSite: workflow.account.accountSite || "",
+    });
+
+    if (workflow.orderId) {
+      await updateSiebelOrder(workflow.orderId, {
+        contactId: contact.id,
+      });
+    }
+
+    updateWorkflow((current) => ({
+      ...current,
+      siebelContact: contact,
+      customer: {
+        ...current.customer,
+        name: contact.name || current.customer.name,
+        firstName: contact.firstName || current.customer.firstName,
+        lastName: contact.lastName || current.customer.lastName,
+      },
+      messages: [
+        ...current.messages,
+        makeMessage("assistant", `Contact ${contact.name} was created in Siebel with ID ${contact.id}.`),
+      ],
+    }));
+    setNotification(`Siebel contact created: ${contact.id}`);
+    setDrawer(null);
+  }
+
+  async function applyAccountFromParsedAction(action) {
+    if (action.actionType === "use_contact_as_account") {
+      await applySuggestedAccountProfile();
+      return;
+    }
+
+    const defaults = parseAccountInput(SAMPLE_ACCOUNT_INPUT, workflow.customer.firstName);
+    const accountIdentity = splitName(
+      action.accountName || action.contactName || workflow.customer.name,
+      workflow.customer.name,
+    );
+    const customerIdentity = splitName(
+      action.contactName || (action.primaryContactSameAsAccount ? action.accountName : workflow.customer.name) || workflow.customer.name,
+      workflow.customer.name,
+    );
+
+    const nextAccount = {
+      accountSite: action.accountSite || workflow.account.accountSite || "New York",
+      mobileNumber: sanitizeDigits(action.mobileNumber || action.phone || workflow.account.mobileNumber || defaults.mobileNumber),
+      governmentId: sanitizeDigits(action.governmentId || workflow.account.governmentId || defaults.governmentId),
+      firstName: accountIdentity.firstName || workflow.account.firstName || defaults.firstName,
+      lastName: accountIdentity.lastName || workflow.account.lastName || defaults.lastName,
+      jobTitle: action.jobTitle || workflow.account.jobTitle || defaults.jobTitle,
+      workPhone: sanitizeDigits(action.workPhone || action.phone || workflow.account.workPhone || defaults.workPhone),
+      email: action.email || workflow.account.email || defaults.email,
+    };
+    const nextCustomer = {
+      ...workflow.customer,
+      name: customerIdentity.name || workflow.customer.name,
+      firstName: customerIdentity.firstName || workflow.customer.firstName,
+      lastName: customerIdentity.lastName || workflow.customer.lastName,
+      address: action.useContactAddressForAccount ? workflow.customer.address : workflow.customer.address,
+    };
+
+    await createAndAttachAccount(nextCustomer, nextAccount);
+  }
+
+  async function applyServiceBillingFromParsedAction(action) {
+    if (action.serviceBillingMode === "same_as_owner" || (!action.shippingAccountName && !action.billingAccountName)) {
+      await applySuggestedServiceBilling();
+      return;
+    }
+
+    if (workflow.siebelAccount?.id && (!action.shippingAccountName || !action.billingAccountName)) {
+      await syncOrderServiceAccounts(workflow.siebelAccount.id);
+    }
+
+    updateWorkflow((current) => ({
+      ...current,
+      serviceBilling: {
+        shippingAccount:
+          action.shippingAccountName || current.serviceBilling.shippingAccount || `Shipping Account - ${getContactName(current)}`,
+        billingAccount:
+          action.billingAccountName || current.serviceBilling.billingAccount || `Billing Account - ${getContactName(current)}`,
+      },
+      messages: [
+        ...current.messages,
+        makeMessage("assistant", "Service and billing accounts selected. Next copy the customer address to billing and shipping."),
+      ],
+    }));
+    setDrawer(null);
+  }
+
+  function applyBillingFromParsedAction(action) {
+    if (action.addressMode === "same_as_customer" || (!action.billingAddress && !action.shippingAddress)) {
+      applySuggestedBilling();
+      return;
+    }
+
+    updateWorkflow((current) => ({
+      ...current,
+      billing: {
+        billingAddress: action.billingAddress || current.billing.billingAddress || current.customer.address,
+        shippingAddress: action.shippingAddress || current.billing.shippingAddress || action.billingAddress || current.customer.address,
+      },
+      messages: [
+        ...current.messages,
+        makeMessage("assistant", "Billing and shipping details added. Next apply payment information."),
+      ],
+    }));
+    setNotification("Billing and shipping details saved.");
+    setDrawer(null);
+  }
+
+  async function applyPaymentFromParsedAction(action) {
+    if (action.paymentMode === "saved" || action.actionType === "apply_saved_payment") {
+      await applySuggestedPayment();
+      return;
+    }
+
+    const nextPayment = {
+      cardholderName: action.cardholderName || workflow.payment.cardholderName || getContactName(workflow),
+      cardType: action.cardType || workflow.payment.cardType || "Visa",
+      cardNumber: formatCardNumber(action.cardNumber || workflow.payment.cardNumber || ""),
+      expiry: action.expiry || workflow.payment.expiry || "",
+    };
+
+    await persistOrderPaymentDetails(nextPayment);
+    updateWorkflow((current) => ({
+      ...current,
+      payment: nextPayment,
+      messages: [
+        ...current.messages,
+        makeMessage("assistant", "Payment details added. The last step is to generate the call summary."),
+      ],
+    }));
+    setDrawer(null);
+  }
+
+  function applySummaryFromParsedAction(action, draft) {
+    if (action.summaryMode === "generate" || !String(action.summaryText || draft || "").trim()) {
+      applyGeneratedSummary();
+      return;
+    }
+
+    updateWorkflow((current) => ({
+      ...current,
+      summaryText: action.summaryText || draft,
+      messages: [
+        ...current.messages,
+        makeMessage("assistant", "The summary has been successfully. Please review all the information added and proceed with placing the order."),
+      ],
+    }));
+  }
+
+  async function executeParsedWorkflowAction(action, draft) {
+    switch (action.actionType) {
+      case "open_catalog":
+        openCatalogDrawer();
+        return true;
+      case "set_catalog_preferences":
+        if (!action.catalogName && !action.priceListName) {
+          return false;
+        }
+        applyCatalogPreferences(action);
+        return true;
+      case "create_contact":
+        await createContactFromParsedAction(action);
+        return true;
+      case "create_account":
+      case "use_contact_as_account":
+        await applyAccountFromParsedAction(action);
+        return true;
+      case "add_recommended_product":
+        await applyRecommendedProductSelection();
+        return true;
+      case "add_specific_product": {
+        const matchedProduct = findProductByActionName(action.productName);
+        if (!matchedProduct?.id) {
+          return false;
+        }
+        await applyProductSelection(matchedProduct.id);
+        return true;
+      }
+      case "assign_service_billing":
+        await applyServiceBillingFromParsedAction(action);
+        return true;
+      case "set_billing_shipping":
+        applyBillingFromParsedAction(action);
+        return true;
+      case "apply_saved_payment":
+        await applySuggestedPayment();
+        return true;
+      case "set_payment_details":
+        if (action.paymentMode !== "saved" && !action.cardNumber && !action.cardType && !action.expiry && !action.cardholderName) {
+          return false;
+        }
+        await applyPaymentFromParsedAction(action);
+        return true;
+      case "generate_summary":
+        applyGeneratedSummary();
+        return true;
+      case "add_summary_text":
+        applySummaryFromParsedAction(action, draft);
+        return true;
+      case "submit_order":
+        submitOrder();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  async function processActionInputLegacy(input, source) {
     const draft = input.trim();
     if (!draft) {
       return;
@@ -2870,6 +3214,56 @@ function App() {
     clearActionInput(source);
   }
 
+  async function processActionInput(input, source) {
+    const draft = input.trim();
+    if (!draft) {
+      return;
+    }
+
+    const hasSensitiveCardInfo = /\b(?:card(?: info| number)?|visa|mastercard|amex|discover)\b/i.test(draft) && /\d/.test(draft);
+
+    if (IS_LLM_MODE_ENABLED && !hasSensitiveCardInfo) {
+      try {
+        const parsedAction = await parseWorkflowAction(draft, {
+          nextStepId,
+          view,
+          completion,
+          orderId: workflow.orderId,
+          orderNumber: workflow.orderNumber,
+          hasSiebelContact: Boolean(workflow.siebelContact?.id),
+          hasSiebelAccount: Boolean(workflow.siebelAccount?.id),
+          customerName: workflow.customer.name,
+          accountName: workflow.siebelAccount?.name || "",
+          recommendedProduct: recommendedProduct
+            ? {
+                name: recommendedProduct.name,
+                category: semanticRecommendation?.categoryNames?.[0] || recommendedProduct.family || "",
+                type: recommendedProduct.isBundledPromotion ? "Bundled promotion" : "Offer",
+              }
+            : null,
+          availableCategories: catalogState.categories.map((category) => category.name),
+          availableProducts: activeProducts.slice(0, 50).map((product) => ({
+            name: product.name,
+            category: product.categoryName || product.family || "",
+            type: product.isBundledPromotion ? "Bundled promotion" : "Offer",
+          })),
+        });
+
+        if (parsedAction?.actionType && parsedAction.actionType !== "unknown") {
+          appendUserActionMessage(draft, source);
+          const handled = await executeParsedWorkflowAction(parsedAction, draft);
+          if (handled) {
+            return;
+          }
+        }
+      } catch {
+        // Fall through to the deterministic parser when the LLM path is unavailable.
+      }
+    }
+
+    await processActionInputLegacy(draft, source);
+  }
+
   async function handleComposerSubmit(event) {
     event.preventDefault();
     await processActionInput(workflow.composer, "composer");
@@ -2945,6 +3339,21 @@ function App() {
     setView("customer360");
   }
 
+  function renderLanguageSelector() {
+    return (
+      <label className="language-selector">
+        <span>Language</span>
+        <select value={locale} onChange={(event) => setLocale(getSupportedLocale(event.target.value))}>
+          {SUPPORTED_LOCALES.map((supportedLocale) => (
+            <option key={supportedLocale} value={supportedLocale}>
+              {LOCALE_LABELS[supportedLocale] || supportedLocale}
+            </option>
+          ))}
+        </select>
+      </label>
+    );
+  }
+
   function renderHome() {
     return (
       <main className="home-screen">
@@ -2954,6 +3363,7 @@ function App() {
             <span>⌄</span>
           </div>
           <div className="home-header__actions">
+            {renderLanguageSelector()}
             <button className="secondary-button">Actions ⌄</button>
             <button className="secondary-button">☎ Communications</button>
           </div>
@@ -3039,6 +3449,7 @@ function App() {
         <div className="pattern-strip pattern-strip--top" aria-hidden="true"></div>
         <header className="intake-header">
           <h1>{APP_TITLE}</h1>
+          {renderLanguageSelector()}
         </header>
 
         <section className="intake-content">
@@ -3098,6 +3509,19 @@ function App() {
                   <span>{semanticRecommendation?.categoryNames?.[0] || recommendedProduct.family || "Supremo Catalog"}</span>
                   <span>{recommendedProduct.isBundledPromotion ? "Bundled promotion" : "Offer"}</span>
                 </div>
+                <div className="recommendation-card__actions">
+                  <button
+                    className={`primary-button ${!isApplyingIntakeRecommendation ? "primary-button--enabled" : ""}`}
+                    disabled={isApplyingIntakeRecommendation}
+                    onClick={() => startWorkflow({ autoRecommendProductId: recommendedProduct.id })}
+                  >
+                    {isApplyingIntakeRecommendation
+                      ? "Applying recommendation..."
+                      : recommendedProduct.isBundledPromotion
+                        ? "Apply recommendation"
+                        : "Add recommendation"}
+                  </button>
+                </div>
               </article>
             ) : null}
           </div>
@@ -3116,16 +3540,6 @@ function App() {
           <h2 className="hero-panel__title hero-panel__title--section">
             {heroMessage}
           </h2>
-          <div className="detail-grid">
-            <div>
-              <span>Catalog</span>
-              <strong>{workflow.catalogName}</strong>
-            </div>
-            <div>
-              <span>Price list</span>
-              <strong>{workflow.priceListName}</strong>
-            </div>
-          </div>
           <div className="step-tracker-list">
             {stepTracker.map((step) => (
               <div key={step.id} className={`step-tracker-row ${step.complete ? "step-tracker-row--complete" : ""}`}>
@@ -3220,11 +3634,11 @@ function App() {
             <div className="cart-summary-grid">
               <div>
                 <span>Monthly Fee</span>
-                <strong>{formatMoneyValue(cartTotals.monthlyFee)}</strong>
+                <strong>{formatLocalizedMoney(cartTotals.monthlyFee)}</strong>
               </div>
               <div>
                 <span>One-time Fee</span>
-                <strong>{formatMoneyValue(cartTotals.oneTimeFee)}</strong>
+                <strong>{formatLocalizedMoney(cartTotals.oneTimeFee)}</strong>
               </div>
               <div>
                 <span>Total discount</span>
@@ -3270,8 +3684,8 @@ function App() {
                       <span>{row.name}</span>
                     </td>
                     <td>{row.quantity}</td>
-                    <td>{formatMoneyValue(fees.monthlyFee)}</td>
-                    <td>{formatMoneyValue(fees.oneTimeFee)}</td>
+                    <td>{formatLocalizedMoney(fees.monthlyFee)}</td>
+                    <td>{formatLocalizedMoney(fees.oneTimeFee)}</td>
                     <td>{`Line ${row.lineNumber}`}</td>
                   </tr>
                   );
@@ -3554,6 +3968,7 @@ function App() {
   function renderCatalogDrawer() {
     const resultCount = filteredProducts.length;
     const browseProducts = browseCategory?.products || [];
+    const catalogChipLabel = catalogState.resolvedCatalogName || workflow.catalogName;
 
     return (
       <aside className="drawer-panel drawer-panel--catalog">
@@ -3579,40 +3994,52 @@ function App() {
           </button>
         </div>
 
-        <div className="catalog-meta">
-          <div className="catalog-meta__left">
-            <strong>{`Catalog source: ${catalogState.resolvedCatalogName || workflow.catalogName}`}</strong>
-          </div>
-          <div className="catalog-meta__right">
-            <strong>{`Price list source: ${catalogState.resolvedPriceListName || workflow.priceListName}`}</strong>
-          </div>
-        </div>
-
         {catalogState.status === "loading" ? <div className="notification-banner"><span>Loading live Siebel products...</span></div> : null}
         {catalogState.error ? <div className="notification-banner"><span>{catalogState.error}</span></div> : null}
 
         {catalogState.view === "search" ? (
         <>
-        <div className="catalog-search">
-          <span>⌕</span>
-          <span className="search-chip">{workflow.catalogName}</span>
-          <span className="search-chip">{workflow.priceListName}</span>
-          <input
-            value={catalogState.query}
-            onChange={(event) => setCatalogQuery(event.target.value)}
-            placeholder="Search by product name"
-          />
+        <div className="catalog-search-stack">
+          <div className="catalog-search">
+            <span>⌕</span>
+            <span className="search-chip">{catalogChipLabel}</span>
+            <input
+              value={catalogState.query}
+              onChange={(event) => setCatalogQuery(event.target.value)}
+              placeholder="Search by product name"
+            />
+          </div>
+
+          <div className="catalog-smart-filters" role="group" aria-label="Catalog category filters">
+            <button
+              type="button"
+              className={`catalog-filter-chip ${!catalogState.browseCategoryId ? "catalog-filter-chip--active" : ""}`}
+              onClick={() => setBrowseCategory("")}
+            >
+              All
+            </button>
+            {catalogState.categories.map((category) => (
+              <button
+                key={category.id}
+                type="button"
+                className={`catalog-filter-chip ${catalogState.browseCategoryId === category.id ? "catalog-filter-chip--active" : ""}`}
+                onClick={() => setBrowseCategory(category.id)}
+              >
+                {category.name}
+              </button>
+            ))}
+          </div>
         </div>
 
         <div className="catalog-meta">
           <div className="catalog-meta__left">
             <strong>{`${resultCount} Results`}</strong>
-            <button className="secondary-button">{`🛒 Order ${workflow.orderNumber || workflow.orderId || "not created"}`}</button>
+            {workflow.orderId ? (
+              <button className="secondary-button">{`🛒 Order ${workflow.orderNumber || workflow.orderId}`}</button>
+            ) : null}
           </div>
           <div className="catalog-meta__right">
             <button className="secondary-button" onClick={() => setCatalogQuery("")}>Clear</button>
-            <button className="secondary-button">List</button>
-            <button className="secondary-button catalog-grid-toggle">Name</button>
           </div>
         </div>
 
@@ -3654,8 +4081,6 @@ function App() {
         ) : (
         <div className="catalog-browse-shell">
           <aside className="catalog-browse-nav">
-            <span className="catalog-browse-nav__label">Catalog</span>
-            <div className="catalog-browse-nav__select">{workflow.catalogName}</div>
             <div className="catalog-browse-nav__list">
               {catalogState.categories.map((category) => (
                 <button
@@ -3674,7 +4099,6 @@ function App() {
             <div className="catalog-browse-header">
               <div>
                 <h3>{browseCategory?.name || "Category Products"}</h3>
-                <p>{`Using ${catalogState.resolvedPriceListName || workflow.priceListName}`}</p>
               </div>
               <div className="catalog-browse-actions">
                 <button className="secondary-button">Configure</button>
@@ -3932,7 +4356,10 @@ function App() {
                 <span>Phone <strong>{customer360Record.phone}</strong></span>
               </div>
             </div>
-            <button className="secondary-button">Account details</button>
+            <div className="customer360-header__actions">
+              {renderLanguageSelector()}
+              <button className="secondary-button">Account details</button>
+            </div>
           </div>
 
           <div className="customer360-search">
@@ -4131,6 +4558,7 @@ function App() {
           <header className="workflow-header">
             <h1>{APP_TITLE}</h1>
             <div className="workflow-header__actions">
+              {renderLanguageSelector()}
               <button className="secondary-button" onClick={() => setView("home")}>
                 Cancel
               </button>

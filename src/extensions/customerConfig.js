@@ -5,33 +5,31 @@ function normalizeText(value) {
     .trim();
 }
 
-export const DEFAULT_CUSTOMER_CONFIG_KEY = "supremo";
-
 const BASE_INTAKE_PROMPT =
   "His name is James, address is 123 East 85th Street, Apt 5G, New York, NY 10028. He's looking for something for his family which includes 5 members, 2 of them working from home. OTT Streaming is required for TV watching.";
 
-const BASE_CUSTOMER_CONFIG = {
-  key: "base",
-  displayName: "Base Telco Package",
+export const DEFAULT_CUSTOMER_CONFIG = {
+  key: "supremo",
+  displayName: "Supremo Residential",
   brand: {
     workflowTitle: "Create order for new customer",
     assistantLabel: "Ask Oracle",
   },
+  ai: {
+    mode: "llm",
+  },
+  globalization: {
+    defaultLocale: "en-US",
+    supportedLocales: ["en-US", "fr-FR", "es-ES"],
+  },
   defaults: {
     catalogName: "Supremo Catalog",
     priceListName: "DBE NA Pricelist",
+    orderNumberPrefix: "CODX-ORDER",
+    promotionOrderNumberPrefix: "Ganesh-Codex",
     intakePrompt: BASE_INTAKE_PROMPT,
     intakePlaceholder: "James is located in New York and requires...",
   },
-  recommendations: {
-    rules: [],
-  },
-};
-
-const SUPREMO_CONFIG = {
-  ...BASE_CUSTOMER_CONFIG,
-  key: "supremo",
-  displayName: "Supremo Residential",
   recommendations: {
     rules: [
       {
@@ -63,40 +61,56 @@ const SUPREMO_CONFIG = {
   },
 };
 
-const CUSTOMER_TEMPLATE_CONFIG = {
-  ...BASE_CUSTOMER_CONFIG,
-  key: "customer-template",
-  displayName: "Customer Template",
-  recommendations: {
-    rules: [
-      {
-        id: "example-rule",
-        matchAll: ["student"],
-        matchAny: ["mobile"],
-        preferCategory: "Mobile Plans",
-        preferProducts: ["Supremo Mobile Unlimited"],
-        score: 150,
-        reason: "Example customer-specific recommendation rule.",
-      },
-    ],
-  },
-};
+export function normalizeCustomerConfig(rawConfig = {}) {
+  const requestedAiMode = String(rawConfig.ai?.mode || DEFAULT_CUSTOMER_CONFIG.ai.mode).trim().toLowerCase();
+  const aiMode = requestedAiMode === "deterministic" ? "deterministic" : "llm";
+  const rawGlobalization = rawConfig.globalization || {};
+  const supportedLocales = Array.isArray(rawGlobalization.supportedLocales) && rawGlobalization.supportedLocales.length
+    ? rawGlobalization.supportedLocales
+    : DEFAULT_CUSTOMER_CONFIG.globalization.supportedLocales;
+  const defaultLocale = supportedLocales.includes(rawGlobalization.defaultLocale)
+    ? rawGlobalization.defaultLocale
+    : DEFAULT_CUSTOMER_CONFIG.globalization.defaultLocale;
 
-const CUSTOMER_CONFIGS = {
-  base: BASE_CUSTOMER_CONFIG,
-  supremo: SUPREMO_CONFIG,
-  "customer-template": CUSTOMER_TEMPLATE_CONFIG,
-};
-
-export function getCustomerConfig(configKey = DEFAULT_CUSTOMER_CONFIG_KEY) {
-  return CUSTOMER_CONFIGS[configKey] || CUSTOMER_CONFIGS[DEFAULT_CUSTOMER_CONFIG_KEY];
+  return {
+    ...DEFAULT_CUSTOMER_CONFIG,
+    ...rawConfig,
+    brand: {
+      ...DEFAULT_CUSTOMER_CONFIG.brand,
+      ...(rawConfig.brand || {}),
+    },
+    ai: {
+      ...DEFAULT_CUSTOMER_CONFIG.ai,
+      ...(rawConfig.ai || {}),
+      mode: aiMode,
+    },
+    globalization: {
+      ...DEFAULT_CUSTOMER_CONFIG.globalization,
+      ...rawGlobalization,
+      defaultLocale,
+      supportedLocales,
+    },
+    defaults: {
+      ...DEFAULT_CUSTOMER_CONFIG.defaults,
+      ...(rawConfig.defaults || {}),
+    },
+    recommendations: {
+      ...DEFAULT_CUSTOMER_CONFIG.recommendations,
+      ...(rawConfig.recommendations || {}),
+      rules: Array.isArray(rawConfig.recommendations?.rules)
+        ? rawConfig.recommendations.rules
+        : DEFAULT_CUSTOMER_CONFIG.recommendations.rules,
+    },
+  };
 }
 
-export function listCustomerConfigs() {
-  return Object.values(CUSTOMER_CONFIGS).map((config) => ({
-    key: config.key,
-    displayName: config.displayName,
-  }));
+export function getRuntimeCustomerConfig() {
+  const runtimeConfig = globalThis.__CUSTOMER_CONFIG__;
+  return normalizeCustomerConfig(runtimeConfig || {});
+}
+
+export function isLlmModeEnabled(config = {}) {
+  return normalizeCustomerConfig(config).ai.mode === "llm";
 }
 
 function includesAll(normalizedInput, terms = []) {

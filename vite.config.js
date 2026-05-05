@@ -1,4 +1,7 @@
 import https from "node:https";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv } from "vite";
 import react from "@vitejs/plugin-react";
 import { brmBillingOverviewResponse } from "./src/mocks/brmMockData";
@@ -19,6 +22,14 @@ import {
   transformSiebelServiceSummary,
 } from "./src/domain/siebelTransformers";
 import { applyBillingWorkflow } from "./src/domain/billingWorkflow";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_SIEBEL_ENDPOINTS = {
+  account: "/data/Account/Account/?PageSize=1&StartRowNum=0",
+  serviceRequests: "/data/Service Request/Service Request/?PageSize=25&StartRowNum=0",
+  assets: "/data/Asset Management - Asset/Asset Mgmt - Asset?limit=20",
+  orders: "/data/Order Entry - Orders/Order Entry - Orders?limit=20",
+};
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -97,22 +108,51 @@ function requestJson(url, headers = {}) {
   });
 }
 
+function loadSiebelConfig(env) {
+  const configPath = path.resolve(__dirname, env.SIEBEL_CONFIG_PATH || "./config/siebel.config.json");
+  const baseConfig = {
+    useRealApi: false,
+    apiBaseUrl: "",
+    endpoints: { ...DEFAULT_SIEBEL_ENDPOINTS },
+  };
+
+  try {
+    const raw = fs.readFileSync(configPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      ...baseConfig,
+      ...parsed,
+      endpoints: {
+        ...DEFAULT_SIEBEL_ENDPOINTS,
+        ...(parsed.endpoints || {}),
+      },
+    };
+  } catch {
+    return baseConfig;
+  }
+}
+
 function createLiveSiebelProxy(env) {
-  const baseUrl = env.SIEBEL_API_BASE_URL || "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+  const siebelConfig = loadSiebelConfig(env);
+  const baseUrl = siebelConfig.apiBaseUrl;
   const authHeaders = buildAuthHeaders(env);
 
   async function getLiveDataset() {
-    const accountPayload = await requestJson(normalizeSiebelUrl(baseUrl, env.SIEBEL_ACCOUNT_ENDPOINT || "/data/Account/Account?limit=1"), authHeaders);
+    if (!baseUrl) {
+      throw new Error("Missing Siebel API base URL. Update config/siebel.config.json.");
+    }
+
+    const accountPayload = await requestJson(normalizeSiebelUrl(baseUrl, siebelConfig.endpoints.account), authHeaders);
     const serviceRequestsPayload = await requestJson(
-      normalizeSiebelUrl(baseUrl, env.SIEBEL_SERVICE_REQUESTS_ENDPOINT || "/data/Service Request/Service Request?limit=25"),
+      normalizeSiebelUrl(baseUrl, siebelConfig.endpoints.serviceRequests),
       authHeaders,
     );
     const assetsPayload = await requestJson(
-      normalizeSiebelUrl(baseUrl, env.SIEBEL_ASSETS_ENDPOINT || "/data/Asset Management - Asset/Asset Mgmt - Asset?limit=20"),
+      normalizeSiebelUrl(baseUrl, siebelConfig.endpoints.assets),
       authHeaders,
     );
     const ordersPayload = await requestJson(
-      normalizeSiebelUrl(baseUrl, env.SIEBEL_ORDERS_ENDPOINT || "/data/Order Entry - Orders/Order Entry - Orders?limit=20"),
+      normalizeSiebelUrl(baseUrl, siebelConfig.endpoints.orders),
       authHeaders,
     );
 
@@ -165,7 +205,8 @@ function createLiveSiebelProxy(env) {
 }
 
 function createMockApiPlugin(env) {
-  const liveProxy = env.SIEBEL_USE_REAL_API === "true" ? createLiveSiebelProxy(env) : null;
+  const siebelConfig = loadSiebelConfig(env);
+  const liveProxy = siebelConfig.useRealApi ? createLiveSiebelProxy(env) : null;
 
   return {
     name: "enterprise-api-layer",

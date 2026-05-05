@@ -7,3 +7,7 @@ coverage/
 .env
 .env.local
 .env.*.local
+
+# Runtime/customer-specific config. Commit the examples only.
+config/*.json
+!config/*.example.json

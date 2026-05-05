@@ -1,0 +1,36 @@
+{
+  "key": "customer-template",
+  "displayName": "Customer Template",
+  "brand": {
+    "workflowTitle": "Create order for new customer",
+    "assistantLabel": "Ask Oracle"
+  },
+  "ai": {
+    "mode": "llm"
+  },
+  "globalization": {
+    "defaultLocale": "en-US",
+    "supportedLocales": ["en-US", "fr-FR", "es-ES"]
+  },
+  "defaults": {
+    "catalogName": "Supremo Catalog",
+    "priceListName": "DBE NA Pricelist",
+    "orderNumberPrefix": "CODX-ORDER",
+    "promotionOrderNumberPrefix": "GaneshCodex",
+    "intakePrompt": "James is located in New York and requires a student-friendly mobile plan.",
+    "intakePlaceholder": "James is located in New York and requires..."
+  },
+  "recommendations": {
+    "rules": [
+      {
+        "id": "example-student-mobile",
+        "matchAll": ["student"],
+        "matchAny": ["mobile"],
+        "preferCategory": "Mobile Plans",
+        "preferProducts": ["Supremo Mobile Unlimited"],
+        "score": 150,
+        "reason": "Example customer-specific recommendation rule."
+      }
+    ]
+  }
+}

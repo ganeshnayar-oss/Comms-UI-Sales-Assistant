@@ -1,0 +1,11 @@
+{
+  "useRealApi": false,
+  "appUrl": "https://your-siebel-host.example.com/siebel/app/ecommunications/enu",
+  "apiBaseUrl": "https://your-siebel-host.example.com/siebel/v1.0",
+  "endpoints": {
+    "account": "/data/Account/Account/?PageSize=1&StartRowNum=0",
+    "serviceRequests": "/data/Service Request/Service Request/?PageSize=25&StartRowNum=0",
+    "assets": "/data/Asset Management/Asset Mgmt - Asset - Header/?PageSize=20&StartRowNum=0",
+    "orders": "/data/Order Entry/Order Entry - Orders/?PageSize=20&StartRowNum=0"
+  }
+}

@@ -1,7 +1,7 @@
 async function getJson(url, options) {
   const response = await fetch(url, options);
   if (!response.ok) {
-    throw new Error(`Siebel API request failed: ${response.status}`);
+    throw new Error(`API request failed: ${response.status}`);
   }
 
   return response.json();
@@ -82,6 +82,26 @@ export function getSiebelCatalogHierarchy(filters = {}) {
 
   const query = params.toString();
   return getJson(`/api/siebel/catalog-hierarchy${query ? `?${query}` : ""}`);
+}
+
+export function parseIntakePrompt(prompt) {
+  return getJson("/api/intake/parse", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ prompt }),
+  });
+}
+
+export function parseWorkflowAction(prompt, context = {}) {
+  return getJson("/api/workflow/parse-action", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ prompt, context }),
+  });
 }
 
 export function createSiebelContact(payload) {

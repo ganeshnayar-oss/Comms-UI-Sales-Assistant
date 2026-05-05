@@ -4,7 +4,7 @@ This application is structured so customer deployments can stay on one shared co
 
 ## Current extension points
 
-The shared configuration registry lives in [src/extensions/customerConfig.js](/Users/GNAYAR/Documents/New%20project/src/extensions/customerConfig.js).
+The shared runtime customer configuration lives in [config/customer.config.json](/Users/GNAYAR/Documents/New%20project/config/customer.config.json).
 
 Each customer package can define:
 
@@ -12,6 +12,8 @@ Each customer package can define:
 - `brand.assistantLabel`
 - `defaults.catalogName`
 - `defaults.priceListName`
+- `defaults.orderNumberPrefix`
+- `defaults.promotionOrderNumberPrefix`
 - `defaults.intakePrompt`
 - `defaults.intakePlaceholder`
 - `recommendations.rules`
@@ -36,9 +38,9 @@ Example rule shape:
 
 ## Adding a new customer package
 
-1. Add a new config entry to `CUSTOMER_CONFIGS`.
-2. Set `VITE_CUSTOMER_CONFIG` and `CUSTOMER_CONFIG` for that deployment.
-3. Keep customer-specific logic in the config entry first.
+1. Copy [config/customer.config.example.json](/Users/GNAYAR/Documents/New%20project/config/customer.config.example.json) to a deployment-specific file.
+2. Set `CUSTOMER_CONFIG_PATH` to that file for the runtime.
+3. Keep customer-specific logic in the config file first.
 4. Add new code-level extension hooks only when configuration is not enough.
 
 ## Deployment guidance
@@ -46,7 +48,7 @@ Example rule shape:
 Prefer this model:
 
 - one shared core repo
-- one deployment-specific customer config key
+- one deployment-specific customer config file
 - environment-specific secrets outside the bundle
 
 That lets you upgrade core features once and roll them out across customers with lower regression risk.

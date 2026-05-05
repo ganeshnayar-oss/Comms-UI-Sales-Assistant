@@ -22,14 +22,171 @@ import {
   transformSiebelServiceSummary,
 } from "./src/domain/siebelTransformers.js";
 import { applyBillingWorkflow } from "./src/domain/billingWorkflow.js";
-import { DEFAULT_CUSTOMER_CONFIG_KEY, getCustomerConfig } from "./src/extensions/customerConfig.js";
+import { parseIntakeDetails } from "./src/domain/intakeParsing.js";
+import { DEFAULT_CUSTOMER_CONFIG, normalizeCustomerConfig } from "./src/extensions/customerConfig.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = __dirname;
 const distDir = path.join(rootDir, "dist-runtime");
-const customerConfig = getCustomerConfig(process.env.CUSTOMER_CONFIG || process.env.VITE_CUSTOMER_CONFIG || DEFAULT_CUSTOMER_CONFIG_KEY);
-const DEFAULT_CATALOG_NAME = customerConfig.defaults.catalogName;
-const DEFAULT_PRICE_LIST_NAME = customerConfig.defaults.priceListName;
+const defaultSiebelConfigPath = path.join(rootDir, "config", "siebel.config.json");
+const defaultCustomerConfigPath = path.join(rootDir, "config", "customer.config.json");
+const DEFAULT_CATALOG_NAME = DEFAULT_CUSTOMER_CONFIG.defaults.catalogName;
+const DEFAULT_PRICE_LIST_NAME = DEFAULT_CUSTOMER_CONFIG.defaults.priceListName;
+const DEFAULT_ORDER_NUMBER_PREFIX = DEFAULT_CUSTOMER_CONFIG.defaults.orderNumberPrefix || "CODX-ORDER";
+const DEFAULT_SIEBEL_ENDPOINTS = {
+  account: "/data/Account/Account/?PageSize=1&StartRowNum=0",
+  serviceRequests: "/data/Service Request/Service Request/?PageSize=25&StartRowNum=0",
+  assets: "/data/Asset Management/Asset Mgmt - Asset - Header/?PageSize=20&StartRowNum=0",
+  orders: "/data/Order Entry/Order Entry - Orders/?PageSize=20&StartRowNum=0",
+};
+const DEFAULT_OPENAI_BASE_URL = "https://api.openai.com/v1";
+const DEFAULT_OPENAI_MODEL = "gpt-5.4-mini";
+const DEFAULT_OCI_BASE_URL_TEMPLATE = "https://inference.generativeai.${region}.oci.oraclecloud.com/openai/v1";
+const INTAKE_JSON_SCHEMA = {
+  name: "sales_intake_profile",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      contactName: { type: "string" },
+      firstName: { type: "string" },
+      lastName: { type: "string" },
+      address: { type: "string" },
+      prospectType: { type: "string" },
+      customerSegment: { type: "string" },
+      productInterest: { type: "string" },
+      requestedProductCategories: {
+        type: "array",
+        items: { type: "string" },
+      },
+      intentSummary: { type: "string" },
+    },
+    required: [
+      "contactName",
+      "firstName",
+      "lastName",
+      "address",
+      "prospectType",
+      "customerSegment",
+      "productInterest",
+      "requestedProductCategories",
+      "intentSummary",
+    ],
+  },
+  strict: true,
+};
+
+const WORKFLOW_ACTION_JSON_SCHEMA = {
+  name: "sales_workflow_action",
+  schema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      actionType: {
+        type: "string",
+        enum: [
+          "open_catalog",
+          "set_catalog_preferences",
+          "create_contact",
+          "create_account",
+          "use_contact_as_account",
+          "add_recommended_product",
+          "add_specific_product",
+          "assign_service_billing",
+          "set_billing_shipping",
+          "apply_saved_payment",
+          "set_payment_details",
+          "generate_summary",
+          "add_summary_text",
+          "submit_order",
+          "unknown",
+        ],
+      },
+      productName: { type: "string" },
+      catalogName: { type: "string" },
+      priceListName: { type: "string" },
+      contactName: { type: "string" },
+      firstName: { type: "string" },
+      lastName: { type: "string" },
+      email: { type: "string" },
+      phone: { type: "string" },
+      accountName: { type: "string" },
+      accountSite: { type: "string" },
+      mobileNumber: { type: "string" },
+      governmentId: { type: "string" },
+      jobTitle: { type: "string" },
+      workPhone: { type: "string" },
+      primaryContactSameAsAccount: { type: "boolean" },
+      useContactAddressForAccount: { type: "boolean" },
+      serviceBillingMode: {
+        type: "string",
+        enum: ["unspecified", "same_as_owner", "custom"],
+      },
+      billingAccountName: { type: "string" },
+      shippingAccountName: { type: "string" },
+      addressMode: {
+        type: "string",
+        enum: ["unspecified", "same_as_customer", "custom"],
+      },
+      billingAddress: { type: "string" },
+      shippingAddress: { type: "string" },
+      paymentMode: {
+        type: "string",
+        enum: ["unspecified", "saved", "manual"],
+      },
+      cardholderName: { type: "string" },
+      cardType: { type: "string" },
+      cardNumber: { type: "string" },
+      expiry: { type: "string" },
+      summaryMode: {
+        type: "string",
+        enum: ["unspecified", "generate", "provided"],
+      },
+      summaryText: { type: "string" },
+      explanation: { type: "string" },
+    },
+    required: [
+      "actionType",
+      "productName",
+      "catalogName",
+      "priceListName",
+      "contactName",
+      "firstName",
+      "lastName",
+      "email",
+      "phone",
+      "accountName",
+      "accountSite",
+      "mobileNumber",
+      "governmentId",
+      "jobTitle",
+      "workPhone",
+      "primaryContactSameAsAccount",
+      "useContactAddressForAccount",
+      "serviceBillingMode",
+      "billingAccountName",
+      "shippingAccountName",
+      "addressMode",
+      "billingAddress",
+      "shippingAddress",
+      "paymentMode",
+      "cardholderName",
+      "cardType",
+      "cardNumber",
+      "expiry",
+      "summaryMode",
+      "summaryText",
+      "explanation",
+    ],
+  },
+  strict: true,
+};
+
+const VALID_WORKFLOW_ACTION_TYPES = new Set(WORKFLOW_ACTION_JSON_SCHEMA.schema.properties.actionType.enum);
+const VALID_SERVICE_BILLING_MODES = new Set(WORKFLOW_ACTION_JSON_SCHEMA.schema.properties.serviceBillingMode.enum);
+const VALID_ADDRESS_MODES = new Set(WORKFLOW_ACTION_JSON_SCHEMA.schema.properties.addressMode.enum);
+const VALID_PAYMENT_MODES = new Set(WORKFLOW_ACTION_JSON_SCHEMA.schema.properties.paymentMode.enum);
+const VALID_SUMMARY_MODES = new Set(WORKFLOW_ACTION_JSON_SCHEMA.schema.properties.summaryMode.enum);
 
 function parseEnvFile(raw) {
   return raw
@@ -57,6 +214,63 @@ async function loadLocalEnv() {
   return { ...env, ...process.env };
 }
 
+function buildSiebelRuntimeEnv(localEnv, siebelConfig) {
+  return {
+    ...localEnv,
+    SIEBEL_USE_REAL_API: String(Boolean(siebelConfig.useRealApi)),
+    SIEBEL_APP_URL: siebelConfig.appUrl || "",
+    SIEBEL_API_BASE_URL: siebelConfig.apiBaseUrl || "",
+    SIEBEL_ACCOUNT_ENDPOINT: siebelConfig.endpoints?.account || DEFAULT_SIEBEL_ENDPOINTS.account,
+    SIEBEL_SERVICE_REQUESTS_ENDPOINT: siebelConfig.endpoints?.serviceRequests || DEFAULT_SIEBEL_ENDPOINTS.serviceRequests,
+    SIEBEL_ASSETS_ENDPOINT: siebelConfig.endpoints?.assets || DEFAULT_SIEBEL_ENDPOINTS.assets,
+    SIEBEL_ORDERS_ENDPOINT: siebelConfig.endpoints?.orders || DEFAULT_SIEBEL_ENDPOINTS.orders,
+    SIEBEL_CONFIG_PATH: siebelConfig.configPath,
+    CUSTOMER_CONFIG_PATH: localEnv.CUSTOMER_CONFIG_PATH || defaultCustomerConfigPath,
+  };
+}
+
+async function loadSiebelConfig(configPath = defaultSiebelConfigPath) {
+  const baseConfig = {
+    useRealApi: false,
+    appUrl: "",
+    apiBaseUrl: "",
+    endpoints: { ...DEFAULT_SIEBEL_ENDPOINTS },
+    configPath,
+  };
+
+  try {
+    const raw = await fs.readFile(configPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return {
+      ...baseConfig,
+      ...parsed,
+      endpoints: {
+        ...DEFAULT_SIEBEL_ENDPOINTS,
+        ...(parsed.endpoints || {}),
+      },
+      configPath,
+    };
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return baseConfig;
+    }
+    throw error;
+  }
+}
+
+async function loadCustomerConfig(configPath = defaultCustomerConfigPath) {
+  try {
+    const raw = await fs.readFile(configPath, "utf8");
+    const parsed = JSON.parse(raw);
+    return normalizeCustomerConfig(parsed);
+  } catch (error) {
+    if (error && typeof error === "object" && "code" in error && error.code === "ENOENT") {
+      return normalizeCustomerConfig({});
+    }
+    throw error;
+  }
+}
+
 function sendJson(res, payload, statusCode = 200) {
   res.statusCode = statusCode;
   res.setHeader("Content-Type", "application/json");
@@ -67,6 +281,15 @@ function sendText(res, payload, statusCode = 200, type = "text/plain; charset=ut
   res.statusCode = statusCode;
   res.setHeader("Content-Type", type);
   res.end(payload);
+}
+
+async function readJsonBody(req) {
+  const chunks = [];
+  for await (const chunk of req) {
+    chunks.push(chunk);
+  }
+  const raw = Buffer.concat(chunks).toString("utf8");
+  return raw ? JSON.parse(raw) : {};
 }
 
 function getContentType(filePath) {
@@ -104,6 +327,14 @@ async function bootstrapSiebelSession(appUrl) {
 
 function normalizeSiebelUrl(baseUrl, endpoint) {
   return new URL(endpoint.startsWith("http") ? endpoint : `${baseUrl}${endpoint}`);
+}
+
+function requireSiebelApiBaseUrl(env) {
+  if (!env.SIEBEL_API_BASE_URL) {
+    throw new Error(`Missing Siebel API base URL. Update ${env.SIEBEL_CONFIG_PATH || "config/siebel.config.json"}.`);
+  }
+
+  return env.SIEBEL_API_BASE_URL;
 }
 
 function encodeSiebelPathSegment(value) {
@@ -445,12 +676,156 @@ function buildExplicitAuthHeaders(env) {
   return {};
 }
 
+function sanitizeString(value, fallback = "") {
+  const normalized = String(value || "").trim();
+  return normalized || fallback;
+}
+
+function resolveProviderBaseUrl(provider, env) {
+  const explicitBaseUrl = sanitizeString(env.INTAKE_LLM_BASE_URL || env.OPENAI_BASE_URL);
+  if (explicitBaseUrl) {
+    return explicitBaseUrl.replace(/\/+$/, "");
+  }
+
+  if (provider === "oci") {
+    const region = sanitizeString(env.INTAKE_LLM_OCI_REGION || env.OCI_REGION);
+    if (!region) {
+      return "";
+    }
+    return DEFAULT_OCI_BASE_URL_TEMPLATE.replace("${region}", region);
+  }
+
+  return DEFAULT_OPENAI_BASE_URL;
+}
+
+function getIntakeLlmConfig(env) {
+  const provider = sanitizeString(env.INTAKE_LLM_PROVIDER, env.OPENAI_API_KEY ? "openai" : "disabled").toLowerCase();
+  const apiKey = sanitizeString(env.INTAKE_LLM_API_KEY || env.OPENAI_API_KEY);
+  const baseUrl = resolveProviderBaseUrl(provider, env);
+  const explicitModel = sanitizeString(env.INTAKE_LLM_MODEL) || sanitizeString(env.OPENAI_MODEL);
+  const model = provider === "openai" ? explicitModel || DEFAULT_OPENAI_MODEL : explicitModel;
+  const project = sanitizeString(env.INTAKE_LLM_PROJECT || env.OPENAI_PROJECT);
+
+  return {
+    provider,
+    apiKey,
+    baseUrl,
+    model,
+    project,
+    organization: sanitizeString(env.OPENAI_ORGANIZATION),
+  };
+}
+
+function normalizeIntakeResult(parsed, input, source, detail = "") {
+  const fallback = parseIntakeDetails(input, "");
+  return {
+    contactName: sanitizeString(parsed?.contactName, fallback.name),
+    firstName: sanitizeString(parsed?.firstName, fallback.firstName),
+    lastName: sanitizeString(parsed?.lastName, fallback.lastName),
+    address: sanitizeString(parsed?.address, fallback.address),
+    prospectType: sanitizeString(parsed?.prospectType, "Individual"),
+    customerSegment: sanitizeString(parsed?.customerSegment, "Residential"),
+    productInterest: sanitizeString(parsed?.productInterest, "General inquiry"),
+    requestedProductCategories: Array.isArray(parsed?.requestedProductCategories)
+      ? parsed.requestedProductCategories.map((value) => sanitizeString(value)).filter(Boolean)
+      : [],
+    intentSummary: sanitizeString(parsed?.intentSummary, input),
+    source,
+    detail,
+  };
+}
+
+function normalizeEnumValue(value, validValues, fallback) {
+  const normalized = sanitizeString(value, fallback);
+  return validValues.has(normalized) ? normalized : fallback;
+}
+
+function normalizeWorkflowActionResult(parsed, input, source, detail = "") {
+  const fallbackIdentity = parseIntakeDetails(input, "");
+  const derivedName =
+    sanitizeString(parsed?.contactName) ||
+    sanitizeString(
+      [sanitizeString(parsed?.firstName), sanitizeString(parsed?.lastName)]
+        .filter(Boolean)
+        .join(" "),
+    );
+  const parsedIdentity = derivedName ? parseIntakeDetails(derivedName, "") : fallbackIdentity;
+
+  return {
+    actionType: normalizeEnumValue(parsed?.actionType, VALID_WORKFLOW_ACTION_TYPES, "unknown"),
+    productName: sanitizeString(parsed?.productName),
+    catalogName: sanitizeString(parsed?.catalogName),
+    priceListName: sanitizeString(parsed?.priceListName),
+    contactName: sanitizeString(parsed?.contactName, derivedName || ""),
+    firstName: sanitizeString(parsed?.firstName, derivedName ? parsedIdentity.firstName : ""),
+    lastName: sanitizeString(parsed?.lastName, derivedName ? parsedIdentity.lastName : ""),
+    email: sanitizeString(parsed?.email),
+    phone: sanitizeString(parsed?.phone),
+    accountName: sanitizeString(parsed?.accountName),
+    accountSite: sanitizeString(parsed?.accountSite),
+    mobileNumber: sanitizeString(parsed?.mobileNumber),
+    governmentId: sanitizeString(parsed?.governmentId),
+    jobTitle: sanitizeString(parsed?.jobTitle),
+    workPhone: sanitizeString(parsed?.workPhone),
+    primaryContactSameAsAccount: Boolean(parsed?.primaryContactSameAsAccount),
+    useContactAddressForAccount: Boolean(parsed?.useContactAddressForAccount),
+    serviceBillingMode: normalizeEnumValue(parsed?.serviceBillingMode, VALID_SERVICE_BILLING_MODES, "unspecified"),
+    billingAccountName: sanitizeString(parsed?.billingAccountName),
+    shippingAccountName: sanitizeString(parsed?.shippingAccountName),
+    addressMode: normalizeEnumValue(parsed?.addressMode, VALID_ADDRESS_MODES, "unspecified"),
+    billingAddress: sanitizeString(parsed?.billingAddress),
+    shippingAddress: sanitizeString(parsed?.shippingAddress),
+    paymentMode: normalizeEnumValue(parsed?.paymentMode, VALID_PAYMENT_MODES, "unspecified"),
+    cardholderName: sanitizeString(parsed?.cardholderName),
+    cardType: sanitizeString(parsed?.cardType),
+    cardNumber: sanitizeString(parsed?.cardNumber),
+    expiry: sanitizeString(parsed?.expiry),
+    summaryMode: normalizeEnumValue(parsed?.summaryMode, VALID_SUMMARY_MODES, "unspecified"),
+    summaryText: sanitizeString(parsed?.summaryText),
+    explanation: sanitizeString(parsed?.explanation),
+    source,
+    detail,
+  };
+}
+
+function extractResponsesOutputText(payload) {
+  const directOutputText = sanitizeString(payload?.output_text);
+  if (directOutputText) {
+    return directOutputText;
+  }
+
+  const outputItems = Array.isArray(payload?.output) ? payload.output : [];
+  for (const item of outputItems) {
+    const contents = Array.isArray(item?.content) ? item.content : [];
+    for (const content of contents) {
+      if (content?.type === "output_text") {
+        const text = sanitizeString(content?.text);
+        if (text) {
+          return text;
+        }
+      }
+    }
+  }
+
+  return "";
+}
+
 function createApiRuntime(env) {
   let bootstrappedCookie = "";
   let siebelHealth = {
     mode: env.SIEBEL_USE_REAL_API === "true" ? "live" : "mock",
+    configPath: env.SIEBEL_CONFIG_PATH || defaultSiebelConfigPath,
     resources: {},
   };
+
+  async function getRuntimeCustomerConfig() {
+    return loadCustomerConfig(env.CUSTOMER_CONFIG_PATH || defaultCustomerConfigPath);
+  }
+
+  async function getAiExecutionMode() {
+    const customerConfig = await getRuntimeCustomerConfig();
+    return customerConfig?.ai?.mode === "deterministic" ? "deterministic" : "llm";
+  }
 
   async function getAuthHeaders() {
     const explicit = buildExplicitAuthHeaders(env);
@@ -465,10 +840,112 @@ function createApiRuntime(env) {
     return bootstrappedCookie ? { Cookie: bootstrappedCookie } : {};
   }
 
+  async function requestStructuredLlmOutput({ inputText, systemText, schema, label }) {
+    const prompt = sanitizeString(inputText);
+    if (!prompt) {
+      throw new Error(`No ${label.toLowerCase()} prompt provided.`);
+    }
+
+    const llm = getIntakeLlmConfig(env);
+
+    if (llm.provider === "disabled") {
+      throw new Error(`${label} LLM provider is disabled.`);
+    }
+
+    if (!llm.apiKey) {
+      throw new Error(`${label} LLM API key is not configured.`);
+    }
+
+    if (!llm.baseUrl) {
+      throw new Error(`${label} LLM base URL is not configured.`);
+    }
+
+    if (!llm.model) {
+      throw new Error(`${label} LLM model is not configured.`);
+    }
+
+    if (llm.provider === "oci" && !llm.project) {
+      throw new Error(`OCI ${label.toLowerCase()} provider requires INTAKE_LLM_PROJECT.`);
+    }
+
+    const response = await fetch(`${llm.baseUrl}/responses`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${llm.apiKey}`,
+        ...(llm.organization && llm.provider === "openai" ? { "OpenAI-Organization": llm.organization } : {}),
+        ...(llm.project ? { "OpenAI-Project": llm.project } : {}),
+      },
+      body: JSON.stringify({
+        model: llm.model,
+        input: [
+          {
+            role: "system",
+            content: [{ type: "input_text", text: systemText }],
+          },
+          {
+            role: "user",
+            content: [{ type: "input_text", text: prompt }],
+          },
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            ...schema,
+          },
+        },
+      }),
+    });
+
+    const rawText = await response.text();
+    if (!response.ok) {
+      throw new Error(`${label} LLM request failed for provider ${llm.provider} (${response.status}): ${rawText || "No response body"}`);
+    }
+
+    const payload = rawText ? JSON.parse(rawText) : {};
+    const outputText = extractResponsesOutputText(payload);
+    if (!outputText) {
+      throw new Error(`${label} parse returned no structured output.`);
+    }
+
+    return JSON.parse(outputText);
+  }
+
+  async function parseIntakeWithLlm(input) {
+    const prompt = sanitizeString(input);
+    if (!prompt) {
+      return normalizeIntakeResult({}, "", "fallback", "No intake prompt provided.");
+    }
+
+    const parsed = await requestStructuredLlmOutput({
+      inputText: prompt,
+      label: "Intake",
+      schema: INTAKE_JSON_SCHEMA,
+      systemText:
+        "Extract structured sales intake information from the user message. Resolve the actual person's name even when phrased indirectly. Do not invent facts. If a field is missing, return an empty string or an empty array. For prospectType prefer labels like Student, Family, Small Business, Existing Customer, or Individual. For customerSegment prefer Residential or Business when implied.",
+    });
+    return normalizeIntakeResult(parsed, prompt, "llm", "");
+  }
+
+  async function parseWorkflowActionWithLlm(input, context = {}) {
+    const prompt = sanitizeString(input);
+    if (!prompt) {
+      return normalizeWorkflowActionResult({}, "", "fallback", "No workflow action prompt provided.");
+    }
+
+    const contextSummary = JSON.stringify(context || {}, null, 2);
+    const parsed = await requestStructuredLlmOutput({
+      inputText: `User command:\n${prompt}\n\nWorkflow context:\n${contextSummary}`,
+      label: "Workflow action",
+      schema: WORKFLOW_ACTION_JSON_SCHEMA,
+      systemText:
+        "Interpret the user's workflow command for a telco contact-center sales assistant. Choose the single best actionType based on the user's intent and the workflow context. Be semantic, not literal. For example, phrases like 'use billing and service account the same as the owner account' mean assign_service_billing with serviceBillingMode same_as_owner. Treat place order, submit order, and complete order as the same submit_order intent. Treat recommendation/apply/add recommendation as add_recommended_product unless the user clearly names a specific product. Use add_specific_product only when the user refers to a concrete product by name. Use set_billing_shipping with addressMode same_as_customer when the user wants to reuse the customer's or contact's address. For any field that is not directly relevant to the chosen actionType, return an empty string, false, or unspecified rather than guessing. Do not invent product names, catalog names, price lists, account details, or contact details. If the intent is unclear, return unknown.",
+    });
+    return normalizeWorkflowActionResult(parsed, prompt, "llm", "");
+  }
+
   async function getAccountScopedDataset(accountId) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const scopedAccountId = String(accountId || "").trim();
 
@@ -578,16 +1055,13 @@ function createApiRuntime(env) {
       }
     }
 
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
 
-    const accountEndpoint = env.SIEBEL_ACCOUNT_ENDPOINT || "/data/Account/Account/?PageSize=1&StartRowNum=0";
-    const serviceEndpoint = env.SIEBEL_SERVICE_REQUESTS_ENDPOINT || "/data/Service Request/Service Request/?PageSize=25&StartRowNum=0";
-    const assetsEndpoint =
-      env.SIEBEL_ASSETS_ENDPOINT || "/data/Asset Management/Asset Mgmt - Asset - Header/?PageSize=20&StartRowNum=0";
-    const ordersEndpoint = env.SIEBEL_ORDERS_ENDPOINT || "/data/Order Entry/Order Entry - Orders/?PageSize=20&StartRowNum=0";
+    const accountEndpoint = env.SIEBEL_ACCOUNT_ENDPOINT;
+    const serviceEndpoint = env.SIEBEL_SERVICE_REQUESTS_ENDPOINT;
+    const assetsEndpoint = env.SIEBEL_ASSETS_ENDPOINT;
+    const ordersEndpoint = env.SIEBEL_ORDERS_ENDPOINT;
 
     async function fetchOrFallback(key, endpoint, transformer, fallbackData) {
       try {
@@ -647,9 +1121,7 @@ function createApiRuntime(env) {
   }
 
   async function fetchSiebelCollection(endpoint) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const payload = await requestJson(normalizeSiebelUrl(baseUrl, endpoint), headers);
     return toSiebelArray(payload);
@@ -780,9 +1252,7 @@ function createApiRuntime(env) {
   }
 
   async function updateAccount(accountId, body) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const payload = {
       ...(body.name ? { Name: body.name } : {}),
@@ -855,9 +1325,7 @@ function createApiRuntime(env) {
       return null;
     }
 
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const params = new URLSearchParams({
       searchspec: `[Name] = "${escapeSiebelSearchValue(requestedName)}"`,
@@ -889,9 +1357,7 @@ function createApiRuntime(env) {
       return null;
     }
 
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const account = await requestJson(
       normalizeSiebelUrl(baseUrl, `/data/Account/Account/${encodeURIComponent(requestedId)}`),
@@ -912,9 +1378,7 @@ function createApiRuntime(env) {
       return "";
     }
 
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const payload = await requestJson(
       normalizeSiebelUrl(
@@ -945,9 +1409,7 @@ function createApiRuntime(env) {
       return address.raw;
     }
 
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const payload = {
       "Address Name": "Primary Address",
@@ -970,9 +1432,7 @@ function createApiRuntime(env) {
   }
 
   async function createContact(body) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const token = body.externalId || `CODX-CONTACT-${Date.now()}`;
     const payload = {
@@ -1004,9 +1464,7 @@ function createApiRuntime(env) {
   }
 
   async function createAccount(body) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const requestedName = body.name || "Codex Account";
 
@@ -1072,9 +1530,7 @@ function createApiRuntime(env) {
       throw new Error("Account id is required to create an account activity.");
     }
 
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const fullSummary = String(body.description || body.summaryText || "").trim();
     const payload = {
@@ -1119,9 +1575,7 @@ function createApiRuntime(env) {
   }
 
   async function listOrderPayments(orderId) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const payload = await requestJson(
       normalizeSiebelUrl(
@@ -1139,9 +1593,7 @@ function createApiRuntime(env) {
       throw new Error("Order id is required to create or update payment details.");
     }
 
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const existingPayments = await listOrderPayments(requestedId).catch(() => []);
     const existingPayment =
@@ -1191,11 +1643,11 @@ function createApiRuntime(env) {
   }
 
   async function createOrder(body) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
-    const token = body.externalId || `CODX-ORDER-${Date.now()}`;
+    const runtimeCustomerConfig = await getRuntimeCustomerConfig();
+    const orderNumberPrefix = runtimeCustomerConfig.defaults.orderNumberPrefix || DEFAULT_ORDER_NUMBER_PREFIX;
+    const token = body.externalId || `${orderNumberPrefix}-${Date.now()}`;
     const orderNumber = body.orderNumber || token;
     const payload = {
       Id: token,
@@ -1260,9 +1712,7 @@ function createApiRuntime(env) {
   }
 
   async function updateOrder(orderId, body) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const payload = {
       ...(body.accountId ? { AccountId: body.accountId } : {}),
@@ -1353,9 +1803,7 @@ function createApiRuntime(env) {
   }
 
   async function updateOrderLineItem(orderId, lineItemId, body, lineItemHref = "") {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const standardUrl = normalizeSiebelUrl(
       baseUrl,
@@ -1408,9 +1856,7 @@ function createApiRuntime(env) {
   }
 
   async function createOrderItem(orderId, body) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const payload = {
       Id: body.externalId || `CODX-LI-${Date.now()}`,
@@ -1460,9 +1906,7 @@ function createApiRuntime(env) {
   }
 
   async function applyPromotionToOrder(orderId, body) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const workflowName =
       env.SIEBEL_PROMOTION_WORKFLOWS ||
@@ -1571,9 +2015,7 @@ function createApiRuntime(env) {
   }
 
   async function listOrderItems(orderId) {
-    const baseUrl =
-      env.SIEBEL_API_BASE_URL ||
-      "https://phoenix200484.appsdev1.fusionappsdphx1.oraclevcn.com:16691/siebel/v1.0";
+    const baseUrl = requireSiebelApiBaseUrl(env);
     const headers = await getAuthHeaders();
     const payload = await requestJson(
       normalizeSiebelUrl(
@@ -1630,34 +2072,41 @@ function createApiRuntime(env) {
     }
 
     if (req.method === "GET" && url.pathname === "/api/siebel/catalogs") {
+      const runtimeCustomerConfig = await getRuntimeCustomerConfig();
+      const defaultCatalogName = runtimeCustomerConfig.defaults.catalogName || DEFAULT_CATALOG_NAME;
       try {
         return sendJson(
           res,
           env.SIEBEL_USE_REAL_API === "true"
             ? await listCatalogs()
-            : [{ id: "fallback-supremo", name: DEFAULT_CATALOG_NAME, type: "Buying", active: "Y" }],
+            : [{ id: "fallback-supremo", name: defaultCatalogName, type: "Buying", active: "Y" }],
         );
       } catch (error) {
-        return sendJson(res, [{ id: "fallback-supremo", name: DEFAULT_CATALOG_NAME, type: "Buying", active: "Y" }]);
+        return sendJson(res, [{ id: "fallback-supremo", name: defaultCatalogName, type: "Buying", active: "Y" }]);
       }
     }
 
     if (req.method === "GET" && url.pathname === "/api/siebel/price-lists") {
+      const runtimeCustomerConfig = await getRuntimeCustomerConfig();
+      const defaultPriceListName = runtimeCustomerConfig.defaults.priceListName || DEFAULT_PRICE_LIST_NAME;
       try {
         return sendJson(
           res,
           env.SIEBEL_USE_REAL_API === "true"
             ? await listPriceLists()
-            : [{ id: "fallback-dbe-na", name: DEFAULT_PRICE_LIST_NAME, type: "PRICE LIST", currency: "USD" }],
+            : [{ id: "fallback-dbe-na", name: defaultPriceListName, type: "PRICE LIST", currency: "USD" }],
         );
       } catch (error) {
-        return sendJson(res, [{ id: "fallback-dbe-na", name: DEFAULT_PRICE_LIST_NAME, type: "PRICE LIST", currency: "USD" }]);
+        return sendJson(res, [{ id: "fallback-dbe-na", name: defaultPriceListName, type: "PRICE LIST", currency: "USD" }]);
       }
     }
 
     if (req.method === "GET" && url.pathname === "/api/siebel/catalog-products") {
-      const requestedCatalogName = url.searchParams.get("catalogName") || DEFAULT_CATALOG_NAME;
-      const requestedPriceListName = url.searchParams.get("priceListName") || DEFAULT_PRICE_LIST_NAME;
+      const runtimeCustomerConfig = await getRuntimeCustomerConfig();
+      const defaultCatalogName = runtimeCustomerConfig.defaults.catalogName || DEFAULT_CATALOG_NAME;
+      const defaultPriceListName = runtimeCustomerConfig.defaults.priceListName || DEFAULT_PRICE_LIST_NAME;
+      const requestedCatalogName = url.searchParams.get("catalogName") || defaultCatalogName;
+      const requestedPriceListName = url.searchParams.get("priceListName") || defaultPriceListName;
 
       if (env.SIEBEL_USE_REAL_API === "true") {
         try {
@@ -1669,8 +2118,8 @@ function createApiRuntime(env) {
             resolvedCatalogName: requestedCatalogName,
             resolvedPriceListName: requestedPriceListName,
             products: [],
-            catalogs: [{ id: "fallback-supremo", name: DEFAULT_CATALOG_NAME, type: "Buying", active: "Y" }],
-            priceLists: [{ id: "fallback-dbe-na", name: DEFAULT_PRICE_LIST_NAME, type: "PRICE LIST", currency: "USD" }],
+            catalogs: [{ id: "fallback-supremo", name: defaultCatalogName, type: "Buying", active: "Y" }],
+            priceLists: [{ id: "fallback-dbe-na", name: defaultPriceListName, type: "PRICE LIST", currency: "USD" }],
             detail: error instanceof Error ? error.message : "Unknown Siebel integration error",
           });
         }
@@ -1682,14 +2131,17 @@ function createApiRuntime(env) {
         resolvedCatalogName: requestedCatalogName,
         resolvedPriceListName: requestedPriceListName,
         products: structuredClone([]),
-        catalogs: [{ id: "fallback-supremo", name: DEFAULT_CATALOG_NAME, type: "Buying", active: "Y" }],
-        priceLists: [{ id: "fallback-dbe-na", name: DEFAULT_PRICE_LIST_NAME, type: "PRICE LIST", currency: "USD" }],
+        catalogs: [{ id: "fallback-supremo", name: defaultCatalogName, type: "Buying", active: "Y" }],
+        priceLists: [{ id: "fallback-dbe-na", name: defaultPriceListName, type: "PRICE LIST", currency: "USD" }],
       });
     }
 
     if (req.method === "GET" && url.pathname === "/api/siebel/catalog-hierarchy") {
-      const requestedCatalogName = url.searchParams.get("catalogName") || DEFAULT_CATALOG_NAME;
-      const requestedPriceListName = url.searchParams.get("priceListName") || DEFAULT_PRICE_LIST_NAME;
+      const runtimeCustomerConfig = await getRuntimeCustomerConfig();
+      const defaultCatalogName = runtimeCustomerConfig.defaults.catalogName || DEFAULT_CATALOG_NAME;
+      const defaultPriceListName = runtimeCustomerConfig.defaults.priceListName || DEFAULT_PRICE_LIST_NAME;
+      const requestedCatalogName = url.searchParams.get("catalogName") || defaultCatalogName;
+      const requestedPriceListName = url.searchParams.get("priceListName") || defaultPriceListName;
 
       if (env.SIEBEL_USE_REAL_API === "true") {
         try {
@@ -1905,7 +2357,9 @@ function createApiRuntime(env) {
           currencyCode: body.currencyCode || "USD",
           salesRep: body.salesRep || "SADMIN",
           status: body.status || "Pending",
-          orderNumber: body.orderNumber || `MOCK-ORDER-${Date.now()}`,
+          orderNumber:
+            body.orderNumber ||
+            `${(await getRuntimeCustomerConfig()).defaults.orderNumberPrefix || DEFAULT_ORDER_NUMBER_PREFIX}-${Date.now()}`,
           orderType: body.orderTypeCode || "Sales",
           contactId: "",
         },
@@ -2096,17 +2550,77 @@ function createApiRuntime(env) {
       return handleSiebel(req, res, url);
     }
 
+    if (req.method === "POST" && url.pathname === "/api/intake/parse") {
+      try {
+        const body = await readJsonBody(req);
+        const prompt = body.prompt ?? "";
+        const aiMode = await getAiExecutionMode();
+
+        try {
+          if (aiMode !== "llm") {
+            return sendJson(res, normalizeIntakeResult({}, prompt, "deterministic", "LLM disabled by runtime config."), 200);
+          }
+          return sendJson(res, await parseIntakeWithLlm(prompt), 200);
+        } catch (error) {
+          return sendJson(
+            res,
+            normalizeIntakeResult({}, prompt, "fallback", error instanceof Error ? error.message : "Unknown intake parse error."),
+            200,
+          );
+        }
+      } catch (error) {
+        return sendJson(
+          res,
+          {
+            error: "Intake parse failed",
+            detail: error instanceof Error ? error.message : "Unknown intake parse error",
+          },
+          400,
+        );
+      }
+    }
+
+    if (req.method === "POST" && url.pathname === "/api/workflow/parse-action") {
+      try {
+        const body = await readJsonBody(req);
+        const prompt = body.prompt ?? "";
+        const context = body.context ?? {};
+        const aiMode = await getAiExecutionMode();
+
+        try {
+          if (aiMode !== "llm") {
+            return sendJson(
+              res,
+              normalizeWorkflowActionResult({}, prompt, "deterministic", "LLM disabled by runtime config."),
+              200,
+            );
+          }
+          return sendJson(res, await parseWorkflowActionWithLlm(prompt, context), 200);
+        } catch (error) {
+          return sendJson(
+            res,
+            normalizeWorkflowActionResult({}, prompt, "fallback", error instanceof Error ? error.message : "Unknown workflow action parse error."),
+            200,
+          );
+        }
+      } catch (error) {
+        return sendJson(
+          res,
+          {
+            error: "Workflow action parse failed",
+            detail: error instanceof Error ? error.message : "Unknown workflow action parse error",
+          },
+          400,
+        );
+      }
+    }
+
     if (req.method === "GET" && url.pathname === "/api/brm/billing/overview") {
       return sendJson(res, structuredClone(brmBillingOverviewResponse));
     }
 
     if (req.method === "POST" && url.pathname === "/api/brm/billing/workflow") {
-      const chunks = [];
-      for await (const chunk of req) {
-        chunks.push(chunk);
-      }
-      const raw = Buffer.concat(chunks).toString("utf8");
-      const body = raw ? JSON.parse(raw) : {};
+      const body = await readJsonBody(req);
       return sendJson(res, applyBillingWorkflow(body.workflow, body.prompt ?? ""));
     }
 
@@ -2150,6 +2664,7 @@ async function buildClient() {
   </head>
   <body>
     <div id="root"></div>
+    <script>window.__CUSTOMER_CONFIG__ = %%CUSTOMER_CONFIG%%;</script>
     <script type="module" src="/app.js"></script>
   </body>
 </html>`,
@@ -2158,12 +2673,32 @@ async function buildClient() {
 }
 
 async function start() {
-  const env = await loadLocalEnv();
+  const localEnv = await loadLocalEnv();
+  const siebelConfigPath = localEnv.SIEBEL_CONFIG_PATH
+    ? path.resolve(rootDir, localEnv.SIEBEL_CONFIG_PATH)
+    : defaultSiebelConfigPath;
+  const customerConfigPath = localEnv.CUSTOMER_CONFIG_PATH
+    ? path.resolve(rootDir, localEnv.CUSTOMER_CONFIG_PATH)
+    : defaultCustomerConfigPath;
+  const siebelConfig = await loadSiebelConfig(siebelConfigPath);
+  const env = {
+    ...buildSiebelRuntimeEnv(localEnv, siebelConfig),
+    CUSTOMER_CONFIG_PATH: customerConfigPath,
+  };
   const port = Number(env.PORT || 4173);
   const host = env.HOST || "127.0.0.1";
 
   await buildClient();
   const apiRuntime = createApiRuntime(env);
+
+  async function renderIndexHtml() {
+    const [template, customerConfig] = await Promise.all([
+      fs.readFile(path.join(distDir, "index.html"), "utf8"),
+      loadCustomerConfig(env.CUSTOMER_CONFIG_PATH || defaultCustomerConfigPath),
+    ]);
+
+    return template.replace("%%CUSTOMER_CONFIG%%", JSON.stringify(customerConfig));
+  }
 
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url || "/", `http://${host}:${port}`);
@@ -2176,13 +2711,18 @@ async function start() {
     const filePath = path.join(distDir, pathname.replace(/^\/+/, ""));
 
     try {
+      if (pathname === "/index.html") {
+        const html = await renderIndexHtml();
+        return sendText(res, html, 200, "text/html; charset=utf-8");
+      }
+
       const file = await fs.readFile(filePath);
       res.statusCode = 200;
       res.setHeader("Content-Type", getContentType(filePath));
       res.end(file);
     } catch {
       try {
-        const fallback = await fs.readFile(path.join(distDir, "index.html"));
+        const fallback = await renderIndexHtml();
         sendText(res, fallback, 200, "text/html; charset=utf-8");
       } catch {
         sendText(res, "Application build not found", 500);
