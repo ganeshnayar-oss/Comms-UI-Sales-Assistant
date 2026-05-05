@@ -32,7 +32,7 @@ Read these files before editing grammar:
 
 1. Interpret the user's natural-language request as a Siebel business intent.
 2. Pick the closest domain and operation.
-3. If the operation requires API discovery, perform discovery first and stop for confirmation before finalizing the grammar.
+3. If the operation requires API discovery or the API mapping is inferred, perform discovery first and stop for confirmation before editing grammar files.
 4. If the operation exists, update both the Markdown domain file and the matching `grammar/*.operations.json`.
 5. If the operation does not exist, add a new operation to both files.
 6. Preserve the operation schema from `docs/siebel-api-grammar/grammar-schema.md`.
@@ -43,7 +43,7 @@ Read these files before editing grammar:
 
 ## API Discovery Confirmation Gate
 
-Use this gate whenever the endpoint, API type, workflow process, business service, required payload, or sequencing is unknown or inferred.
+Use this gate whenever the endpoint, API type, workflow process, business service, required payload, or sequencing is unknown, inferred, or not explicitly provided by the user.
 
 Discovery sources can include:
 
@@ -52,7 +52,7 @@ Discovery sources can include:
 - Siebel documentation or environment discovery when the user authorizes it.
 - Safe test calls against non-production environments when the user authorizes them.
 
-After discovery, stop and present a concise confirmation summary before marking the entry `reviewed` or using it for implementation:
+After discovery, stop and present a concise confirmation summary before editing the grammar, marking the entry `reviewed`, or using it for implementation:
 
 ```text
 Discovered operation:
@@ -65,15 +65,16 @@ Discovered operation:
 - Risks/unknowns:
 - Proposed validation status:
 
-Please confirm this is correct before I update the grammar as reviewed/validated or implement against it.
+Please confirm this is correct before I update the grammar or implement against it.
 ```
 
 Rules:
 
-- If the user confirms, update the grammar and set `humanValidationStatus` to `reviewed` unless the user says it was tested end-to-end.
+- If the user confirms the discovered mapping, update the grammar and set `humanValidationStatus` to `reviewed` unless the user says it was tested end-to-end.
 - If the user says it was tested successfully, set `humanValidationStatus` to `validated`.
-- If the user does not confirm, keep the entry `draft` and clearly mark unknowns with template placeholders.
+- If the user does not confirm, do not edit grammar files. Instead, summarize the proposed draft and ask what to change.
 - Do not silently convert a discovered guess into a validated grammar rule.
+- Do not add a new operation with an inferred endpoint/API type before the user confirms the discovered mapping.
 - Do not implement app code against a newly discovered API until the user confirms the discovered mapping or explicitly accepts a `draft` implementation.
 
 ## API Selection Rules
