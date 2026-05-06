@@ -37,7 +37,224 @@ The user experience should feel like a modern Redwood-style enterprise applicati
 - Submit the order.
 - View the created account in Customer 360.
 
-## 5. High-Level Architecture
+## 5. Persona-Led Journey Requirements
+
+The application is not just a set of screens. It enables a business journey for a contact center sales representative onboarding a prospect with as little friction as possible.
+
+The primary persona journey is:
+
+```text
+Contact center sales rep receives a prospect request
+  -> captures contact and need in natural language
+  -> confirms or refines contact/account information
+  -> views or applies recommendations
+  -> searches/browses catalog
+  -> adds products or promotions to cart
+  -> configures/reviews the cart
+  -> completes checkout details
+  -> submits the order
+  -> lands in Customer 360 for the created/used account
+```
+
+The UI clickstream is only one expression of this journey. QA should test whether the persona can accomplish the business goal, not whether the user clicked a specific sequence of controls.
+
+### Journey Principles
+
+- The sales rep can use either the agentic AI workflow, the UI canvas, or both interchangeably.
+- Natural-language input should reduce friction, not open unnecessary forms.
+- The canvas should always provide a visible, editable representation of the workflow state.
+- The recommendation panel should guide the next best action and execute it directly when sufficient information is known.
+- The agent should never need to re-enter information already captured from intake, Siebel, or prior workflow steps.
+- The app should support recovery: if AI parsing misses something, the canvas drawer should allow correction without restarting the journey.
+- Every completed step should be visible so the agent trusts where they are in the journey.
+- The app should feel like one continuous onboarding journey, not disconnected API demos.
+
+### Primary Journey: New Prospect Onboarding To Submitted Order
+
+Persona: Contact center sales representative.
+
+Business goal: Convert a prospect into an order with minimal friction.
+
+Starting point:
+
+- Rep has a natural-language description of a prospect.
+- Prospect may provide name, address, phone/email, customer type, need, and product interest in any order.
+
+Journey stages:
+
+1. Capture prospect intent in natural language.
+2. AI extracts contact identity, address, customer segment, and product need.
+3. System creates or prepares contact/account context.
+4. System recommends the best product or promotion based on semantic match.
+5. Rep accepts recommendation or browses/searches catalog.
+6. Rep adds product/promotion to cart.
+7. System creates/updates Siebel order/cart correctly.
+8. Rep completes account, billing/service, address, payment, and summary steps.
+9. Rep submits order.
+10. System navigates to Customer 360 for the account.
+
+Success outcome:
+
+- Contact exists.
+- Account exists where required.
+- Cart/order contains intended products and promotion child lines.
+- Checkout data is complete.
+- Order is submitted.
+- Customer 360 reflects the created/used account.
+
+### Alternate Journey: Recommendation-First Order
+
+Persona: Contact center sales representative.
+
+Business goal: Accept the recommended offer directly from the intake page.
+
+Journey stages:
+
+1. Rep enters natural-language prospect description.
+2. App recommends a semantically relevant product/promotion.
+3. Rep clicks add/apply recommendation.
+4. App creates contact and account as needed.
+5. App applies product or promotion to cart/order.
+6. App opens the workflow page with the completed steps reflected.
+7. Rep finishes checkout and submits order.
+
+Success outcome:
+
+- Rep is not forced to manually perform account setup before recommendation apply when the app already has enough information.
+- Product/promotion is added through the correct Siebel flow.
+- Workflow state reflects actions completed behind the scenes.
+
+### Alternate Journey: Canvas-First Correction
+
+Persona: Contact center sales representative.
+
+Business goal: Correct or complete details through the canvas when AI-parsed data is incomplete or wrong.
+
+Journey stages:
+
+1. Rep enters intake.
+2. AI parses available information.
+3. Rep notices missing or incorrect account/contact/billing/payment detail.
+4. Rep clicks edit on the relevant canvas card.
+5. Drawer opens with editable fields.
+6. Rep saves correction.
+7. Workflow and recommendation panel update accordingly.
+
+Success outcome:
+
+- Rep can recover without restarting.
+- Corrected data becomes the source of truth for later Siebel calls.
+
+### Alternate Journey: Agentic Natural-Language Action
+
+Persona: Contact center sales representative.
+
+Business goal: Execute workflow actions by typing natural language.
+
+Example prompts:
+
+```text
+Create account as Mary Jones
+Use billing and service account the same as the owner account
+Use contact address for billing and shipping
+Use saved Visa card
+Place order
+```
+
+Success outcome:
+
+- App interprets the business intent.
+- App executes the action directly if enough information is known.
+- App does not open a drawer just because the user typed an action.
+- Canvas and step tracker update after the action.
+
+### Existing Customer Extension Journeys
+
+The grammar and architecture should also support future existing-customer journeys:
+
+- Existing customer ordering.
+- Modify asset.
+- Disconnect asset.
+- Upgrade or downgrade promotion.
+- Suspend service.
+- Resume service.
+
+These journeys do not need to be fully implemented in the first app, but the requirements and grammar should be structured so an agentic AI can extend the app into these flows.
+
+## 6. Journey-Based QA And Test Strategy
+
+QA should validate persona outcomes and business journeys, not only UI clickstream mechanics.
+
+The UI clickstream is still useful for automation, but it is not the primary requirement. The primary requirement is whether a contact center sales rep can complete the intended journey with zero friction.
+
+### QA Testing Principles
+
+- Test the journey from the persona's point of view.
+- Validate business state transitions, not only button clicks.
+- Test both agentic AI path and canvas path for the same business goal.
+- Test recovery when AI parsing is incomplete.
+- Test that known information is reused and not requested again.
+- Test that Siebel records are created or updated in the correct sequence.
+- Test that recommendation, cart, checkout, and Customer 360 stay synchronized.
+
+### Journey Test Template
+
+Each journey test should include:
+
+```text
+Persona:
+Business goal:
+Starting context:
+Natural-language input:
+Allowed interaction paths:
+Expected system interpretation:
+Expected UI state:
+Expected Siebel operations:
+Expected business outcome:
+Recovery expectations:
+Regression risks:
+```
+
+### Example Journey Test
+
+Persona: Contact center sales rep.
+
+Business goal: Onboard a student prospect and submit a mobile plan order.
+
+Natural-language input:
+
+```text
+The prospect is a student Alia Herbert, interested in a mobile plan. Resides at address is 123 East 85th Street, Apt 5G, New York, NY 10028.
+```
+
+Expected system interpretation:
+
+- Contact name is Alia Herbert.
+- Prospect type is student.
+- Address is captured.
+- Product interest is mobile plan.
+- Recommended category is Mobile Plans.
+
+Expected recommendation:
+
+- Student-friendly mobile product/promotion is recommended.
+- Recommendation is not chosen merely because it is first in the category.
+
+Allowed interaction paths:
+
+- Agent accepts recommendation from intake page.
+- Agent uses smart action bar to add recommendation.
+- Agent opens catalog and selects product from canvas.
+
+Expected business outcome:
+
+- Contact/account context is created as needed.
+- Product/promotion is added to cart using correct Siebel flow.
+- Checkout can be completed.
+- Order can be submitted.
+- Customer 360 opens for Alia Herbert's account.
+
+## 7. High-Level Architecture
 
 Build a React single-page application with a local runtime server.
 
@@ -69,7 +286,7 @@ The browser must not call Siebel directly. The frontend should call local runtim
 
 The runtime server should call the actual Siebel or LLM endpoint, handle auth, normalize response shapes, and avoid exposing secrets in browser code.
 
-## 6. Configuration Requirements
+## 8. Configuration Requirements
 
 Do not hard-code customer environment values.
 
@@ -171,7 +388,7 @@ OPENAI_MODEL
 
 Never commit secrets.
 
-## 7. AI Requirements
+## 9. AI Requirements
 
 The application must support two modes:
 
@@ -246,7 +463,7 @@ If LLM is disabled, use deterministic parsing fallbacks for basic workflows.
 
 Do not send sensitive payment/card details to the LLM. Parse payment locally and mask values.
 
-## 8. UX Requirements
+## 10. UX Requirements
 
 ### Home Page
 
@@ -335,7 +552,7 @@ Examples:
 
 Recommendation panel actions should execute directly when possible and should not force the agent to re-enter information that is already known.
 
-## 9. Product Recommendation Requirements
+## 11. Product Recommendation Requirements
 
 The app must use semantic matching to recommend a product/promotion from catalog/category/product descriptions.
 
@@ -358,7 +575,7 @@ Do not simply pick the first product in a category.
 
 Support customer-configured recommendation rules that bias product selection.
 
-## 10. Catalog Requirements
+## 12. Catalog Requirements
 
 The product catalog must support separate tabs:
 
@@ -391,7 +608,7 @@ Category
 
 Preserve category/product hierarchy.
 
-## 11. Cart Requirements
+## 13. Cart Requirements
 
 Cart should support:
 
@@ -414,7 +631,7 @@ Cart columns:
 
 Use Siebel line item parent/root identifiers when available.
 
-## 12. Siebel Integration Requirements
+## 14. Siebel Integration Requirements
 
 Use a local runtime proxy for Siebel.
 
@@ -509,7 +726,7 @@ Promotion payload pattern:
 - Generate or capture call summary.
 - If creating an activity, respect Siebel field length limits.
 
-## 13. Customer 360 Requirements
+## 15. Customer 360 Requirements
 
 After order submission, navigate to Customer 360 for the account created or used in the workflow.
 
@@ -544,7 +761,7 @@ Show last three records for:
 - Assets.
 - Billing items where applicable.
 
-## 14. Localization And Globalization Requirements
+## 16. Localization And Globalization Requirements
 
 Support:
 
@@ -567,7 +784,7 @@ Product descriptions and Siebel LOV values should come translated from Siebel wh
 
 Selected locale should persist in local storage.
 
-## 15. Accessibility Requirements
+## 17. Accessibility Requirements
 
 React does not automatically provide accessibility. Implement:
 
@@ -578,7 +795,7 @@ React does not automatically provide accessibility. Implement:
 - Escape-to-close for drawers where appropriate.
 - Semantic headings and form labels.
 
-## 16. Extensibility Requirements
+## 18. Extensibility Requirements
 
 The app must support customer-specific extension without forking core code.
 
@@ -608,7 +825,7 @@ skills/siebel-api-grammar/
 
 to guide future Siebel API mapping and agentic implementation.
 
-## 17. File Structure Requirements
+## 19. File Structure Requirements
 
 Expected structure:
 
@@ -636,7 +853,7 @@ src/
   styles.css
 ```
 
-## 18. Security Requirements
+## 20. Security Requirements
 
 - Never commit secrets.
 - Never expose OpenAI, OCI, or Siebel credentials to browser code.
@@ -645,7 +862,7 @@ src/
 - Runtime server handles auth and proxying.
 - Do not send payment/card data to LLM.
 
-## 19. Build And Run Requirements
+## 21. Build And Run Requirements
 
 Required commands:
 
@@ -663,41 +880,45 @@ http://127.0.0.1:4173/
 
 The runtime server should serve its own build output and proxy API routes.
 
-## 20. Acceptance Criteria
+## 22. Acceptance Criteria
 
 The app is acceptable when:
 
-- Home page loads.
-- Create order flow starts from home.
-- Intake text can be parsed into contact/account/customer needs.
-- Recommendation is semantically relevant.
-- Agent can add recommendation from intake page.
-- Main workflow shows agentic chat, canvas, and recommendation panel.
-- Smart action bar executes natural-language actions.
-- Chat can be collapsed and expanded.
-- Canvas supports all workflow actions through drawers or buttons.
-- Catalog search and browse work separately.
-- Category chips filter products.
-- Cart shows expandable parent-child lines.
+- A contact center sales rep can complete the new prospect onboarding journey from natural-language intake through submitted order.
+- The same business journey can be completed through agentic AI actions, canvas interactions, or a mix of both.
+- The rep can capture contact information in natural language without following a rigid form-first clickstream.
+- The app reuses known customer/contact/account/order data and does not ask the rep to re-enter information already captured.
+- Recommendation is semantically relevant to the persona need and not merely the first product in a category.
+- Agent can add or apply recommendation from the intake page when sufficient information exists.
+- Main workflow shows agentic chat, dynamic canvas, and recommendation panel as synchronized parts of one journey.
+- Smart action bar executes natural-language business actions.
+- Canvas supports correction and recovery through drawers or buttons without restarting the journey.
+- Catalog search and browse support product discovery as part of the journey.
+- Cart shows expandable parent-child lines so the rep can understand bundled promotions.
 - Simple products and bundled promotions follow distinct Siebel flows.
+- Checkout captures account, billing/service, address, payment, and summary information.
 - Payment is added to order, not account.
-- Order submit navigates to Customer 360.
-- Customer 360 shows active account data.
+- Order submit navigates to Customer 360 for the created/used account.
+- Customer 360 shows active account data and confirms the journey outcome.
 - Language selector supports English, French, and Spanish.
 - Runtime config avoids hard-coded customer environment values.
 - `npm run build` passes.
 
-## 21. Regression Tests To Generate
+## 23. Regression Tests To Generate
 
-Generate tests or smoke scripts for:
+Generate journey-based tests and supporting smoke scripts for:
 
+- New prospect onboarding from natural-language intake to submitted order.
+- Recommendation-first journey where the rep applies the recommendation directly from intake.
+- Canvas-first correction journey where the rep fixes parsed contact/account details without restarting.
+- Agentic natural-language action journey for account, billing/service, address, payment, summary, and submit actions.
 - Intake parsing of varied natural-language name/address patterns.
 - Student/mobile recommendation selects the student-friendly mobile product.
-- Search by product name.
-- Browse catalog hierarchy.
-- Add simple product.
+- Search by product name as part of product discovery.
+- Browse catalog hierarchy as part of product discovery.
+- Add simple product to cart/order.
 - Apply bundled promotion with `ProdPromId`.
-- Re-query cart line hierarchy.
+- Re-query cart line hierarchy after add/apply.
 - Owner account assignment does not set billing/service account prematurely.
 - Billing/service account assignment does not break line items.
 - Payment attaches to order.
@@ -705,7 +926,7 @@ Generate tests or smoke scripts for:
 - Customer 360 uses created account id.
 - Spanish/French labels render without obvious English leakage for app-owned strings.
 
-## 22. Development Instructions For Agentic AI
+## 24. Development Instructions For Agentic AI
 
 When building this app:
 
@@ -719,11 +940,10 @@ When building this app:
 8. Run `npm run build` after code changes.
 9. Keep code, config, and customer-specific data separated.
 
-## 23. Non-Goals
+## 25. Non-Goals
 
 - Do not build a full production identity system.
 - Do not store real payment card data.
 - Do not hard-code one customer environment.
 - Do not bypass Siebel business services/workflows when they are required.
 - Do not make the browser call Siebel directly.
-
