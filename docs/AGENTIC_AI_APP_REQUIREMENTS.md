@@ -10,7 +10,9 @@ This document is written so an agentic AI development tool can generate the appl
 
 The application is a contact-center sales assistant for onboarding a customer, recommending products, adding products or promotions to an order, completing checkout information, submitting the order, and navigating to Customer 360.
 
-The user experience should feel like a modern Redwood-style enterprise application:
+The user experience should align to the provided Figma clickthrough prototype and Redwood UX designs. The Figma prototype is the source of truth for look and feel, templates, spacing, navigation patterns, and page composition.
+
+The application should feel like a modern Redwood-style enterprise application:
 
 - Agentic assistant for natural-language actions.
 - UI canvas that updates as the workflow progresses.
@@ -19,14 +21,61 @@ The user experience should feel like a modern Redwood-style enterprise applicati
 - Cart with expandable parent-child line items.
 - Customer 360 with account insights and recent activity.
 
-## 3. Primary Users
+## 3. Design Source Of Truth
+
+The input package for an agentic AI build must include the Figma clickthrough prototype video/screenshots that were provided for the Redwood UX design.
+
+The Figma/clickthrough prototype governs:
+
+- Visual look and feel.
+- Redwood styling direction.
+- Page templates.
+- Navigation patterns.
+- Panel composition.
+- Layout density.
+- Header/action placement.
+- Drawer behavior.
+- Catalog drawer layout.
+- Customer 360 foldout layout.
+- Ask Oracle icon placement and interaction patterns.
+
+The agentic AI should use the Figma prototype as design intent, not as a literal clickstream script. The goal is to reproduce the Redwood-aligned experience pattern while still optimizing the business journey for the contact center sales rep.
+
+### Design Expectations
+
+- Use the Redwood visual language shown in the prototype: enterprise-grade spacing, cards, foldouts, subtle separators, Redwood-style controls, and clean hierarchy.
+- Recreate the navigation model shown in the clickthrough: home/task entry point, intake flow, agentic workflow, catalog drawer, checkout canvas, and Customer 360.
+- Match the template structure shown in the prototype before inventing new layouts.
+- Preserve important page regions from the prototype, including header, smart action area, panels, foldouts, drawers, and recommendation surfaces.
+- Use the prototype to infer visual hierarchy and interaction affordances.
+- Do not replace the Figma navigation pattern with generic chatbot-only UX.
+- Do not replace Redwood-style enterprise pages with generic consumer SaaS layouts.
+- If exact assets or measurements are unavailable, produce the closest Redwood-aligned approximation and document assumptions.
+
+### Design QA
+
+QA should validate both:
+
+- Business journey success.
+- Visual/navigation alignment to the Figma Redwood prototype.
+
+Design QA should check:
+
+- Does the home page resemble the provided Redwood home/task screen?
+- Does the intake page align to the provided Redwood intake template?
+- Does the workflow page preserve the three-zone pattern: agentic chat, canvas, recommendation panel?
+- Does the catalog drawer preserve search/browse navigation and category hierarchy?
+- Does Customer 360 preserve the foldout layout and horizontal scroll behavior?
+- Are Ask Oracle icon placement, action bar patterns, and drawer interactions aligned to the prototype?
+
+## 4. Primary Users
 
 - Contact center sales agent.
 - Sales operations user.
 - Demo user showing how agentic AI can generate a Siebel experience layer.
 - Developer extending the experience for another customer or domain.
 
-## 4. Core User Goals
+## 5. Core User Goals
 
 - Capture a prospect/customer request in natural language.
 - Use AI to parse customer name, address, prospect type, and product needs.
@@ -37,7 +86,7 @@ The user experience should feel like a modern Redwood-style enterprise applicati
 - Submit the order.
 - View the created account in Customer 360.
 
-## 5. Persona-Led Journey Requirements
+## 6. Persona-Led Journey Requirements
 
 The application is not just a set of screens. It enables a business journey for a contact center sales representative onboarding a prospect with as little friction as possible.
 
@@ -181,7 +230,7 @@ The grammar and architecture should also support future existing-customer journe
 
 These journeys do not need to be fully implemented in the first app, but the requirements and grammar should be structured so an agentic AI can extend the app into these flows.
 
-## 6. Journey-Based QA And Test Strategy
+## 7. Journey-Based QA And Test Strategy
 
 QA should validate persona outcomes and business journeys, not only UI clickstream mechanics.
 
@@ -254,7 +303,7 @@ Expected business outcome:
 - Order can be submitted.
 - Customer 360 opens for Alia Herbert's account.
 
-## 7. High-Level Architecture
+## 8. High-Level Architecture
 
 Build a React single-page application with a local runtime server.
 
@@ -286,7 +335,7 @@ The browser must not call Siebel directly. The frontend should call local runtim
 
 The runtime server should call the actual Siebel or LLM endpoint, handle auth, normalize response shapes, and avoid exposing secrets in browser code.
 
-## 8. Configuration Requirements
+## 9. Configuration Requirements
 
 Do not hard-code customer environment values.
 
@@ -388,7 +437,7 @@ OPENAI_MODEL
 
 Never commit secrets.
 
-## 9. AI Requirements
+## 10. AI Requirements
 
 The application must support two modes:
 
@@ -463,7 +512,18 @@ If LLM is disabled, use deterministic parsing fallbacks for basic workflows.
 
 Do not send sensitive payment/card details to the LLM. Parse payment locally and mask values.
 
-## 10. UX Requirements
+## 11. UX Requirements
+
+All UX must align to the supplied Figma clickthrough prototype and Redwood UX design language. The sections below describe the required behavior, but visual structure and navigation patterns should be derived from the prototype.
+
+### Redwood/Figma Alignment
+
+- Use the prototype as the baseline for templates and navigation.
+- Use Redwood-style page headers, cards, panels, drawers, buttons, forms, foldouts, and separators.
+- Preserve the clickthrough's high-level navigation sequence while optimizing the persona journey.
+- Maintain the visual relationship between agentic workflow, UI canvas, and recommendation panel.
+- Match the prototype's page density and enterprise layout style.
+- Keep Ask Oracle iconography and placement consistent with the provided design.
 
 ### Home Page
 
@@ -552,7 +612,7 @@ Examples:
 
 Recommendation panel actions should execute directly when possible and should not force the agent to re-enter information that is already known.
 
-## 11. Product Recommendation Requirements
+## 12. Product Recommendation Requirements
 
 The app must use semantic matching to recommend a product/promotion from catalog/category/product descriptions.
 
@@ -575,7 +635,7 @@ Do not simply pick the first product in a category.
 
 Support customer-configured recommendation rules that bias product selection.
 
-## 12. Catalog Requirements
+## 13. Catalog Requirements
 
 The product catalog must support separate tabs:
 
@@ -608,7 +668,7 @@ Category
 
 Preserve category/product hierarchy.
 
-## 13. Cart Requirements
+## 14. Cart Requirements
 
 Cart should support:
 
@@ -631,7 +691,7 @@ Cart columns:
 
 Use Siebel line item parent/root identifiers when available.
 
-## 14. Siebel Integration Requirements
+## 15. Siebel Integration Requirements
 
 Use a local runtime proxy for Siebel.
 
@@ -726,7 +786,7 @@ Promotion payload pattern:
 - Generate or capture call summary.
 - If creating an activity, respect Siebel field length limits.
 
-## 15. Customer 360 Requirements
+## 16. Customer 360 Requirements
 
 After order submission, navigate to Customer 360 for the account created or used in the workflow.
 
@@ -761,7 +821,7 @@ Show last three records for:
 - Assets.
 - Billing items where applicable.
 
-## 16. Localization And Globalization Requirements
+## 17. Localization And Globalization Requirements
 
 Support:
 
@@ -784,7 +844,7 @@ Product descriptions and Siebel LOV values should come translated from Siebel wh
 
 Selected locale should persist in local storage.
 
-## 17. Accessibility Requirements
+## 18. Accessibility Requirements
 
 React does not automatically provide accessibility. Implement:
 
@@ -795,7 +855,7 @@ React does not automatically provide accessibility. Implement:
 - Escape-to-close for drawers where appropriate.
 - Semantic headings and form labels.
 
-## 18. Extensibility Requirements
+## 19. Extensibility Requirements
 
 The app must support customer-specific extension without forking core code.
 
@@ -825,7 +885,7 @@ skills/siebel-api-grammar/
 
 to guide future Siebel API mapping and agentic implementation.
 
-## 19. File Structure Requirements
+## 20. File Structure Requirements
 
 Expected structure:
 
@@ -853,7 +913,7 @@ src/
   styles.css
 ```
 
-## 20. Security Requirements
+## 21. Security Requirements
 
 - Never commit secrets.
 - Never expose OpenAI, OCI, or Siebel credentials to browser code.
@@ -862,7 +922,7 @@ src/
 - Runtime server handles auth and proxying.
 - Do not send payment/card data to LLM.
 
-## 21. Build And Run Requirements
+## 22. Build And Run Requirements
 
 Required commands:
 
@@ -880,7 +940,7 @@ http://127.0.0.1:4173/
 
 The runtime server should serve its own build output and proxy API routes.
 
-## 22. Acceptance Criteria
+## 23. Acceptance Criteria
 
 The app is acceptable when:
 
@@ -891,6 +951,8 @@ The app is acceptable when:
 - Recommendation is semantically relevant to the persona need and not merely the first product in a category.
 - Agent can add or apply recommendation from the intake page when sufficient information exists.
 - Main workflow shows agentic chat, dynamic canvas, and recommendation panel as synchronized parts of one journey.
+- Visual design, templates, navigation patterns, and panel composition align to the provided Figma Redwood clickthrough prototype.
+- The app does not replace the prototype's enterprise Redwood experience with a generic chatbot or generic SaaS layout.
 - Smart action bar executes natural-language business actions.
 - Canvas supports correction and recovery through drawers or buttons without restarting the journey.
 - Catalog search and browse support product discovery as part of the journey.
@@ -904,7 +966,7 @@ The app is acceptable when:
 - Runtime config avoids hard-coded customer environment values.
 - `npm run build` passes.
 
-## 23. Regression Tests To Generate
+## 24. Regression Tests To Generate
 
 Generate journey-based tests and supporting smoke scripts for:
 
@@ -912,6 +974,7 @@ Generate journey-based tests and supporting smoke scripts for:
 - Recommendation-first journey where the rep applies the recommendation directly from intake.
 - Canvas-first correction journey where the rep fixes parsed contact/account details without restarting.
 - Agentic natural-language action journey for account, billing/service, address, payment, summary, and submit actions.
+- Design parity smoke checks against the Figma Redwood prototype for home, intake, workflow, catalog drawer, checkout canvas, and Customer 360.
 - Intake parsing of varied natural-language name/address patterns.
 - Student/mobile recommendation selects the student-friendly mobile product.
 - Search by product name as part of product discovery.
@@ -926,7 +989,7 @@ Generate journey-based tests and supporting smoke scripts for:
 - Customer 360 uses created account id.
 - Spanish/French labels render without obvious English leakage for app-owned strings.
 
-## 24. Development Instructions For Agentic AI
+## 25. Development Instructions For Agentic AI
 
 When building this app:
 
@@ -940,7 +1003,7 @@ When building this app:
 8. Run `npm run build` after code changes.
 9. Keep code, config, and customer-specific data separated.
 
-## 25. Non-Goals
+## 26. Non-Goals
 
 - Do not build a full production identity system.
 - Do not store real payment card data.
