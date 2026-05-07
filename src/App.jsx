@@ -17,6 +17,7 @@ import {
   getSiebelServiceSummary,
   parseIntakePrompt,
   parseWorkflowAction,
+  runOrderAssistantAgent,
   updateSiebelOrder,
 } from "./api/siebelApi";
 import {
@@ -3214,6 +3215,37 @@ function App() {
     clearActionInput(source);
   }
 
+  function buildOrderAssistantContext() {
+    return {
+      nextStepId,
+      view,
+      completion,
+      catalogName: workflow.catalogName,
+      priceListName: workflow.priceListName,
+      orderId: workflow.orderId,
+      orderNumber: workflow.orderNumber,
+      hasSiebelContact: Boolean(workflow.siebelContact?.id),
+      hasSiebelAccount: Boolean(workflow.siebelAccount?.id),
+      customerName: workflow.customer.name,
+      accountName: workflow.siebelAccount?.name || "",
+      recommendedProduct: recommendedProduct
+        ? {
+            name: recommendedProduct.name,
+            id: recommendedProduct.id,
+            category: semanticRecommendation?.categoryNames?.[0] || recommendedProduct.family || "",
+            type: recommendedProduct.isBundledPromotion ? "Bundled promotion" : "Offer",
+          }
+        : null,
+      availableCategories: catalogState.categories.map((category) => category.name),
+      availableProducts: activeProducts.slice(0, 50).map((product) => ({
+        name: product.name,
+        id: product.id,
+        category: product.categoryName || product.family || "",
+        type: product.isBundledPromotion ? "Bundled promotion" : "Offer",
+      })),
+    };
+  }
+
   async function processActionInput(input, source) {
     const draft = input.trim();
     if (!draft) {
@@ -3224,30 +3256,8 @@ function App() {
 
     if (IS_LLM_MODE_ENABLED && !hasSensitiveCardInfo) {
       try {
-        const parsedAction = await parseWorkflowAction(draft, {
-          nextStepId,
-          view,
-          completion,
-          orderId: workflow.orderId,
-          orderNumber: workflow.orderNumber,
-          hasSiebelContact: Boolean(workflow.siebelContact?.id),
-          hasSiebelAccount: Boolean(workflow.siebelAccount?.id),
-          customerName: workflow.customer.name,
-          accountName: workflow.siebelAccount?.name || "",
-          recommendedProduct: recommendedProduct
-            ? {
-                name: recommendedProduct.name,
-                category: semanticRecommendation?.categoryNames?.[0] || recommendedProduct.family || "",
-                type: recommendedProduct.isBundledPromotion ? "Bundled promotion" : "Offer",
-              }
-            : null,
-          availableCategories: catalogState.categories.map((category) => category.name),
-          availableProducts: activeProducts.slice(0, 50).map((product) => ({
-            name: product.name,
-            category: product.categoryName || product.family || "",
-            type: product.isBundledPromotion ? "Bundled promotion" : "Offer",
-          })),
-        });
+        const agentResult = await runOrderAssistantAgent(draft, buildOrderAssistantContext());
+        const parsedAction = agentResult?.action || agentResult;
 
         if (parsedAction?.actionType && parsedAction.actionType !== "unknown") {
           appendUserActionMessage(draft, source);
@@ -3257,7 +3267,19 @@ function App() {
           }
         }
       } catch {
-        // Fall through to the deterministic parser when the LLM path is unavailable.
+        try {
+          const parsedAction = await parseWorkflowAction(draft, buildOrderAssistantContext());
+
+          if (parsedAction?.actionType && parsedAction.actionType !== "unknown") {
+            appendUserActionMessage(draft, source);
+            const handled = await executeParsedWorkflowAction(parsedAction, draft);
+            if (handled) {
+              return;
+            }
+          }
+        } catch {
+          // Fall through to the deterministic parser when the agent and LLM parser are unavailable.
+        }
       }
     }
 

@@ -104,6 +104,16 @@ export function parseWorkflowAction(prompt, context = {}) {
   });
 }
 
+export function runOrderAssistantAgent(prompt, context = {}) {
+  return getJson("/api/agent/order-assistant", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ prompt, context }),
+  });
+}
+
 export function createSiebelContact(payload) {
   return getJson("/api/siebel/contacts", {
     method: "POST",

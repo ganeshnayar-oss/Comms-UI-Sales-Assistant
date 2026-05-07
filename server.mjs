@@ -3,6 +3,8 @@ import https from "node:https";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promises as fs } from "node:fs";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { build } from "esbuild";
 import { brmBillingOverviewResponse } from "./src/mocks/brmMockData.js";
 import {
@@ -30,6 +32,7 @@ const rootDir = __dirname;
 const distDir = path.join(rootDir, "dist-runtime");
 const defaultSiebelConfigPath = path.join(rootDir, "config", "siebel.config.json");
 const defaultCustomerConfigPath = path.join(rootDir, "config", "customer.config.json");
+const mcpServerPath = path.join(rootDir, "mcp", "sales-assistant-mcp-server.mjs");
 const DEFAULT_CATALOG_NAME = DEFAULT_CUSTOMER_CONFIG.defaults.catalogName;
 const DEFAULT_PRICE_LIST_NAME = DEFAULT_CUSTOMER_CONFIG.defaults.priceListName;
 const DEFAULT_ORDER_NUMBER_PREFIX = DEFAULT_CUSTOMER_CONFIG.defaults.orderNumberPrefix || "CODX-ORDER";
@@ -942,6 +945,194 @@ function createApiRuntime(env) {
         "Interpret the user's workflow command for a telco contact-center sales assistant. Choose the single best actionType based on the user's intent and the workflow context. Be semantic, not literal. For example, phrases like 'use billing and service account the same as the owner account' mean assign_service_billing with serviceBillingMode same_as_owner. Treat place order, submit order, and complete order as the same submit_order intent. Treat recommendation/apply/add recommendation as add_recommended_product unless the user clearly names a specific product. Use add_specific_product only when the user refers to a concrete product by name. Use set_billing_shipping with addressMode same_as_customer when the user wants to reuse the customer's or contact's address. For any field that is not directly relevant to the chosen actionType, return an empty string, false, or unspecified rather than guessing. Do not invent product names, catalog names, price lists, account details, or contact details. If the intent is unclear, return unknown.",
     });
     return normalizeWorkflowActionResult(parsed, prompt, "llm", "");
+  }
+
+  function parseMcpToolContent(result, toolName) {
+    const textContent = (result?.content || []).find((item) => item?.type === "text")?.text || "";
+
+    if (result?.isError) {
+      throw new Error(textContent || `${toolName} MCP tool returned an error.`);
+    }
+
+    if (!textContent) {
+      return {};
+    }
+
+    try {
+      return JSON.parse(textContent);
+    } catch {
+      return { text: textContent };
+    }
+  }
+
+  function summarizeMcpObservation(toolName, payload) {
+    if (toolName === "get_catalog_hierarchy") {
+      const categories = Array.isArray(payload?.categories)
+        ? payload.categories
+        : Array.isArray(payload)
+          ? payload
+          : [];
+      return {
+        categoryCount: categories.length,
+        categories: categories.slice(0, 8).map((category) => category.name || category.label || category.id).filter(Boolean),
+      };
+    }
+
+    if (toolName === "search_catalog_products") {
+      const products = Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.products)
+          ? payload.products
+          : Array.isArray(payload?.items)
+            ? payload.items
+            : [];
+      return {
+        productCount: products.length,
+        products: products.slice(0, 5).map((product) => ({
+          id: product.id || product.productId || product.promotionId || "",
+          name: product.name || product.productName || product.displayName || "",
+          type: product.type || product.productType || "",
+          category: product.categoryName || product.category || product.family || "",
+        })),
+      };
+    }
+
+    return { ok: true };
+  }
+
+  async function withMcpClient(callback) {
+    const runtimeUrl = env.SALES_ASSISTANT_RUNTIME_URL || env.RUNTIME_BASE_URL || "http://127.0.0.1:4173";
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [mcpServerPath],
+      cwd: rootDir,
+      env: {
+        PATH: process.env.PATH || "",
+        SALES_ASSISTANT_RUNTIME_URL: runtimeUrl,
+      },
+      stderr: "pipe",
+    });
+    const client = new Client({ name: "sales-assistant-runtime-agent", version: "0.1.0" });
+
+    await client.connect(transport);
+    try {
+      return await callback(client);
+    } finally {
+      await client.close();
+    }
+  }
+
+  async function callAgentMcpTool(client, trace, name, args = {}) {
+    const startedAt = Date.now();
+    try {
+      const result = await client.callTool({ name, arguments: args });
+      const payload = parseMcpToolContent(result, name);
+      trace.push({
+        tool: name,
+        status: "ok",
+        durationMs: Date.now() - startedAt,
+        observation: summarizeMcpObservation(name, payload),
+      });
+      return payload;
+    } catch (error) {
+      trace.push({
+        tool: name,
+        status: "error",
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+  }
+
+  function buildAgentAssistantMessage(action, observations = []) {
+    const actionType = action?.actionType || "unknown";
+    const catalogObservation = observations.find((observation) => observation.tool === "get_catalog_hierarchy")?.observation;
+    const productObservation = observations.find((observation) => observation.tool === "search_catalog_products")?.observation;
+
+    if (actionType === "unknown") {
+      return "I could not confidently map that to an ordering action. Please provide the next customer or order instruction.";
+    }
+
+    if (actionType === "open_catalog" && catalogObservation?.categoryCount) {
+      return `I understood that as opening the catalog. I found ${catalogObservation.categoryCount} catalog categories to guide product selection.`;
+    }
+
+    if (actionType === "add_specific_product" && productObservation?.productCount) {
+      const firstProduct = productObservation.products?.[0]?.name;
+      return firstProduct
+        ? `I understood that as adding ${firstProduct} to the order.`
+        : "I understood that as adding a specific product to the order.";
+    }
+
+    if (actionType === "add_recommended_product") {
+      return "I understood that as adding the recommended offer to the order.";
+    }
+
+    if (actionType === "assign_service_billing") {
+      return "I understood that as assigning billing and service account information.";
+    }
+
+    if (actionType === "submit_order") {
+      return "I understood that as submitting the order.";
+    }
+
+    return `I understood that as ${actionType.replace(/_/g, " ")}.`;
+  }
+
+  async function runOrderingAgentWithMcp(input, context = {}) {
+    const prompt = sanitizeString(input);
+    if (!prompt) {
+      return {
+        action: normalizeWorkflowActionResult({}, "", "fallback", "No workflow action prompt provided."),
+        assistantMessage: "Please enter the next ordering instruction.",
+        executionMode: "agentic_mcp",
+        toolTrace: [],
+      };
+    }
+
+    const toolTrace = [];
+
+    return withMcpClient(async (client) => {
+      const parsedAction = await callAgentMcpTool(client, toolTrace, "parse_workflow_action", {
+        prompt,
+        context,
+      });
+      const action = {
+        ...normalizeWorkflowActionResult(parsedAction, prompt, "agentic_mcp", parsedAction?.detail || ""),
+        agentSource: parsedAction?.source || "",
+      };
+
+      if (action.actionType === "open_catalog") {
+        await callAgentMcpTool(client, toolTrace, "get_catalog_hierarchy", {
+          catalogName: action.catalogName || context.catalogName || "",
+          priceListName: action.priceListName || context.priceListName || "",
+        });
+      }
+
+      if (action.actionType === "add_specific_product" && action.productName) {
+        await callAgentMcpTool(client, toolTrace, "search_catalog_products", {
+          catalogName: action.catalogName || context.catalogName || "",
+          priceListName: action.priceListName || context.priceListName || "",
+          query: action.productName,
+        });
+      }
+
+      if (action.actionType === "add_recommended_product" && context.recommendedProduct?.name) {
+        await callAgentMcpTool(client, toolTrace, "search_catalog_products", {
+          catalogName: context.catalogName || "",
+          priceListName: context.priceListName || "",
+          query: context.recommendedProduct.name,
+        });
+      }
+
+      return {
+        action,
+        assistantMessage: buildAgentAssistantMessage(action, toolTrace),
+        executionMode: "agentic_mcp",
+        toolTrace,
+      };
+    });
   }
 
   async function getAccountScopedDataset(accountId) {
@@ -2580,6 +2771,58 @@ function createApiRuntime(env) {
       }
     }
 
+    if (req.method === "POST" && url.pathname === "/api/agent/order-assistant") {
+      try {
+        const body = await readJsonBody(req);
+        const prompt = body.prompt ?? "";
+        const context = body.context ?? {};
+        const aiMode = await getAiExecutionMode();
+
+        try {
+          if (aiMode !== "llm") {
+            return sendJson(
+              res,
+              {
+                action: normalizeWorkflowActionResult({}, prompt, "deterministic", "LLM disabled by runtime config."),
+                assistantMessage: "AI agent mode is disabled. Falling back to deterministic workflow handling.",
+                executionMode: "deterministic",
+                toolTrace: [],
+              },
+              200,
+            );
+          }
+
+          return sendJson(res, await runOrderingAgentWithMcp(prompt, context), 200);
+        } catch (error) {
+          return sendJson(
+            res,
+            {
+              action: normalizeWorkflowActionResult(
+                {},
+                prompt,
+                "fallback",
+                error instanceof Error ? error.message : "Unknown agent execution error.",
+              ),
+              assistantMessage:
+                "The agent could not complete tool-based reasoning, so the app can fall back to the deterministic workflow handler.",
+              executionMode: "fallback",
+              toolTrace: [],
+            },
+            200,
+          );
+        }
+      } catch (error) {
+        return sendJson(
+          res,
+          {
+            error: "Order assistant agent failed",
+            detail: error instanceof Error ? error.message : "Unknown order assistant agent error",
+          },
+          400,
+        );
+      }
+    }
+
     if (req.method === "POST" && url.pathname === "/api/workflow/parse-action") {
       try {
         const body = await readJsonBody(req);
@@ -2687,6 +2930,7 @@ async function start() {
   };
   const port = Number(env.PORT || 4173);
   const host = env.HOST || "127.0.0.1";
+  env.RUNTIME_BASE_URL = `http://${host}:${port}`;
 
   await buildClient();
   const apiRuntime = createApiRuntime(env);

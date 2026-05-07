@@ -8,11 +8,14 @@
     "build": "vite build",
     "preview": "vite preview",
     "start:runtime": "/usr/local/bin/node server.mjs",
+    "start:mcp": "/usr/local/bin/node mcp/sales-assistant-mcp-server.mjs",
     "explain:folders": "node scripts/explain-folder-structure.mjs"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@rollup/rollup-darwin-arm64": "^4.60.2",
